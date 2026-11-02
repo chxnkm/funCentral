@@ -49,6 +49,8 @@ interface RoomState {
   groupId?: string | null;
   groupName?: string | null;
   origin?: string | null;
+  /** Player ids removed by the host in the lobby. A reconnect must not undo a kick. */
+  kickedIds?: string[];
 }
 
 interface Session {
@@ -106,7 +108,7 @@ export class TaiDiRoom extends DurableObject {
       const rngState = Number.isInteger(seed) ? Number(seed) : crypto.getRandomValues(new Uint32Array(1))[0] | 0;
       const state: RoomState = {
         roomCode, players: [], hostId: null, game: null, gameNo: 0, gameId: null, rngState, lastRating: null, ratedGameId: null,
-        groupId: groupId ?? null, groupName: groupName ?? null, origin: origin ?? null, idleSince: Date.now(),
+        groupId: groupId ?? null, groupName: groupName ?? null, origin: origin ?? null, idleSince: Date.now(), kickedIds: [],
       };
       await this.save(state);
       return Response.json({ ok: true });
@@ -229,6 +231,7 @@ export class TaiDiRoom extends DurableObject {
       case 'join': {
         const telegramId = telegramIdOf(playerId);
         if (telegramId === null) return 'Sign in with Telegram to play';
+        if ((state.kickedIds ?? []).includes(playerId)) return 'You were removed from this lobby';
         const name = session.name ?? normalizePlayerName(msg.name);
         if (seat >= 0) {
           if (name) state.players[seat].name = name;
@@ -257,7 +260,12 @@ export class TaiDiRoom extends DurableObject {
         if (game) return 'Players can only be removed in the lobby';
         const target = state.players.findIndex((p) => p.id === msg.playerId);
         if (target < 0 || msg.playerId === playerId) return null;
+        const removedId = state.players[target].id;
         this.removePlayer(state, target);
+        // Persist the kick for the life of this room: a reload/reconnect by the
+        // kicked player must not re-seat them, and a later join is rejected above.
+        const kicked = state.kickedIds ??= [];
+        if (!kicked.includes(removedId)) kicked.push(removedId);
         return null;
       }
       case 'start': {
@@ -401,7 +409,10 @@ export class TaiDiRoom extends DurableObject {
 
   private async getState(): Promise<RoomState | null> {
     const state = (await this.ctx.storage.get<RoomState>('state')) ?? null;
-    if (state) state.rngState ??= crypto.getRandomValues(new Uint32Array(1))[0] | 0;
+    if (state) {
+      state.rngState ??= crypto.getRandomValues(new Uint32Array(1))[0] | 0;
+      state.kickedIds ??= [];
+    }
     return state;
   }
 
@@ -439,7 +450,7 @@ export function buildView(state: RoomState, playerId: string) {
     gameNo: state.gameNo,
     minPlayers: MIN_PLAYERS,
     maxPlayers: MAX_PLAYERS,
-    you: { seat, isHost: state.hostId === playerId, id: playerId },
+    you: { seat, isHost: state.hostId === playerId, id: playerId, kicked: (state.kickedIds ?? []).includes(playerId) },
     players: state.players.map((p) => ({
       id: p.id, name: p.name, connected: p.connected, isHost: p.id === state.hostId,
       // Only meaningful in group rooms: false = plays and is rated, but doesn't count for the group board.

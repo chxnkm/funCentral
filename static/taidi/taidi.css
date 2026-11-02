@@ -66,6 +66,20 @@ button.top-bar-room::after { content: '🔗'; font-size: 0.62rem; letter-spacing
 .td-code-hint { display: block; font-size: 0.68rem; color: var(--text-dim); margin-top: 2px; }
 .td-seats { margin: 10px 0; }
 .td-player, .td-empty { display: flex; align-items: center; gap: 10px; }
+/* Lobby rows have only 4 children (avatar, name, badges, action), but the
+   shared .player-list grid in /style.css is built for Bridge's 5 (seat number,
+   status dot, name, badges, action). Without this override the name landed in
+   the 7px status-dot column and broke one character per line. Same pattern as
+   Regicide's .rc-seats override. */
+.td-seats .player-item.td-player {
+  display: grid; grid-template-columns: 38px minmax(0, 1fr) auto 36px; column-gap: 0.6rem;
+}
+/* Same squeeze on empty rows: give their label the flexible column too. */
+.td-seats .player-item.td-empty {
+  display: grid; grid-template-columns: 38px minmax(0, 1fr); column-gap: 0.6rem;
+}
+.td-seats .td-player .lobby-meta { grid-column: 3; grid-row: 1; justify-content: flex-end; }
+.td-seats .td-player .lobby-action { grid-column: 4; grid-row: 1; }
 .td-empty { opacity: 0.6; }
 .td-enter { animation: td-in 260ms ease-out both; }
 @keyframes td-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }

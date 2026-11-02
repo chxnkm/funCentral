@@ -130,6 +130,10 @@ let reconnectTimer = 0;
 let lastGameNo = -1;
 let overDismissed = false;
 let joinSent = false;
+/** 'full' when a join was rejected because the lobby was full; 'kicked' when removed by the host. */
+let joinBlocked = null;
+/** True once this tab has seen a game in this room (kept across reconnects, so a spectator is not auto-seated when the room returns to the lobby). */
+let hasSeenGame = false;
 let lastFocus = null;
 const lobbySeen = new Set();
 
@@ -641,14 +645,25 @@ function onError(msg) {
     leaveRoom(false);
     return;
   }
+  // A rejected join must not leave the lobby saying "Joining…" forever: remember
+  // why it was rejected so the lobby can offer an explicit Take a Seat action
+  // (full lobby) or say the player was removed (kicked), instead of auto-retrying.
+  if (msg.message?.includes('removed from this lobby')) joinBlocked = 'kicked';
+  else if (msg.message?.includes('This room is full')) joinBlocked = 'full';
   toast(msg.message, 'error');
   shake($('hand'));
+  if (view && !view.game) render();
 }
 
 let overPending = false; // hold the results panel until the closing animation has played
 
 function onState(next) {
   const prev = view;
+  if (next.game) {
+    hasSeenGame = true;
+    if (roomCode) store.set(`taidiWatched:${roomCode}`, '1');
+  }
+  if (next.you?.kicked) joinBlocked = 'kicked';
   // Connection flags, names and late rating results don't change the game itself: refresh those
   // parts without interrupting an animation or the pending results panel.
   if (next.game && prev?.game && prev.gameNo === next.gameNo && JSON.stringify(next.game) === JSON.stringify(prev.game)) {
@@ -664,9 +679,16 @@ function onState(next) {
   overPending = false;
   const scene = snapshotScene();
   view = next;
-  if (next.you.seat >= 0) joinSent = true; // seated: never auto-join again on this connection (e.g. after a kick)
+  if (next.you.kicked) joinBlocked = 'kicked';
+  if (next.you.seat >= 0) { joinSent = true; joinBlocked = null; } // seated: never auto-join again on this connection (e.g. after a kick)
+  if (next.game) {
+    hasSeenGame = true;
+    if (roomCode) store.set(`taidiWatched:${roomCode}`, '1');
+  }
   // Join on first contact if we aren't seated yet and the game hasn't started (signed-in players only).
-  if (!joinSent && next.you.seat < 0 && !next.game && FunAuth.token()) {
+  // Never auto-join a spectator back in after a game, a kicked player, or a
+  // rejected full-lobby join: those need an explicit Take a Seat (or stay out).
+  if (!joinSent && next.you.seat < 0 && !next.game && FunAuth.token() && !hasSeenGame && !joinBlocked) {
     joinSent = true;
     send({ type: 'join', name: playerName });
   }
@@ -784,17 +806,33 @@ function renderLobby() {
   const seated = you.seat >= 0;
   $('btn-start').classList.toggle('hidden', !you.isHost);
   $('btn-start').disabled = n < min;
+  const takeSeat = $('btn-take-seat');
   if (!seated && !FunAuth.token()) {
     $('lobby-wait').textContent = 'Sign in with Telegram on the Tai Di home screen to take a seat — you can watch until then.';
+    takeSeat.classList.add('hidden');
     return;
   }
   $('btn-start').textContent = `🎴 Start Game (${n} players)`;
   const wait = $('lobby-wait');
-  wait.textContent = !seated
-    ? (n >= max ? 'This room is full.' : 'Joining…')
-    : you.isHost
-      ? (n < min ? `Share the code — you need at least ${min} players.` : n < max ? `Share the code — up to ${max} can play, or start now.` : 'Table is full — ready when you are.')
-      : `Waiting for ${players.find((p) => p.isHost)?.name ?? 'the host'} to start...`;
+  if (!seated && joinBlocked === 'kicked') {
+    wait.textContent = 'You were removed from this lobby.';
+    takeSeat.classList.add('hidden');
+  } else if (!seated && (joinBlocked === 'full' || hasSeenGame)) {
+    // Explicit action, not another auto-join: the visitor was rejected while full,
+    // or watched a game and stayed a spectator when it ended.
+    wait.textContent = n >= max
+      ? 'This room is full — take a seat when one opens.'
+      : joinBlocked === 'full' ? 'A seat is open — take it to play.' : 'You were watching — take a seat to play.';
+    takeSeat.classList.remove('hidden');
+    takeSeat.disabled = n >= max;
+  } else {
+    takeSeat.classList.add('hidden');
+    wait.textContent = !seated
+      ? (n >= max ? 'This room is full.' : 'Joining…')
+      : you.isHost
+        ? (n < min ? `Share the code — you need at least ${min} players.` : n < max ? `Share the code — up to ${max} can play, or start now.` : 'Table is full — ready when you are.')
+        : `Waiting for ${players.find((p) => p.isHost)?.name ?? 'the host'} to start...`;
+  }
 }
 
 // ---------- Game rendering ----------
@@ -1155,6 +1193,11 @@ function enterRoom(code) {
   roomCode = code;
   view = null;
   lastGameNo = -1;
+  joinSent = false;
+  joinBlocked = null;
+  // A spectator who watched a game in this room before (same tab, or a reload)
+  // must not be auto-seated on re-entry: they can still take a seat explicitly.
+  hasSeenGame = store.get(`taidiWatched:${code}`) === '1';
   lobbySeen.clear();
   history.replaceState(null, '', `#${code}${hashInfo.pid ? `:${hashInfo.pid}` : ''}`);
   render();
@@ -1299,6 +1342,12 @@ $('btn-share').addEventListener('click', shareInvite);
 $('lobby-code-btn').addEventListener('click', shareInvite);
 $('tb-room').addEventListener('click', shareInvite);
 $('btn-start').addEventListener('click', () => send({ type: 'start' }));
+$('btn-take-seat').addEventListener('click', () => {
+  // Explicit re-attempt after a full-lobby rejection or watching a game: the
+  // room re-checks (full/kicked) and seats the player, or rejects again.
+  joinSent = true;
+  send({ type: 'join', name: playerName });
+});
 $('btn-leave').addEventListener('click', async () => {
   const g = view?.game;
   const midGame = g && !isOver(g) && view.you.seat >= 0;

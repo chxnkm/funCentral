@@ -101,7 +101,7 @@ export interface TaiDiLeaderboardEntry {
   gamesPlayed: number;
 }
 
-type Row = { display_name: string; rating: number; wins: number; games_played: number; rank: number };
+type Row = { telegram_id: number; display_name: string; rating: number; wins: number; games_played: number; rank: number };
 const toEntry = (r: Row): TaiDiLeaderboardEntry => ({
   rank: r.rank, displayName: r.display_name, elo: r.rating, wins: r.wins, gamesPlayed: r.games_played,
 });
@@ -114,7 +114,7 @@ export async function getTaiDiLeaderboard(
 ): Promise<{ top: TaiDiLeaderboardEntry[]; me: TaiDiLeaderboardEntry | null }> {
   const top = await db
     .prepare(
-      `SELECT u.display_name, r.rating, r.wins, r.games_played,
+      `SELECT r.telegram_id, u.display_name, r.rating, r.wins, r.games_played,
               RANK() OVER (ORDER BY r.rating DESC) AS rank
        FROM taidi_ratings r JOIN users u ON u.telegram_id = r.telegram_id
        WHERE r.games_played > 0
@@ -123,19 +123,23 @@ export async function getTaiDiLeaderboard(
     )
     .bind(limit)
     .all<Row>();
-  const entries = (top.results ?? []).map(toEntry);
+  const topRows = top.results ?? [];
+  const entries = topRows.map(toEntry);
   if (!telegramId) return { top: entries, me: null };
 
   const me = await db
     .prepare(
-      `SELECT u.display_name, r.rating, r.wins, r.games_played,
+      `SELECT r.telegram_id, u.display_name, r.rating, r.wins, r.games_played,
               (SELECT COUNT(*) + 1 FROM taidi_ratings o WHERE o.games_played > 0 AND o.rating > r.rating) AS rank
        FROM taidi_ratings r JOIN users u ON u.telegram_id = r.telegram_id
        WHERE r.telegram_id = ? AND r.games_played > 0`,
     )
     .bind(telegramId)
     .first<Row>();
-  if (!me || me.rank <= limit) return { top: entries, me: null };
+  // Do not rely on rank alone: with ties at the cutoff, a player can share a
+  // rank inside the limit yet be cut off by LIMIT, so their own row would vanish.
+  // Only suppress `me` when they are actually in the returned rows.
+  if (!me || topRows.some((r) => r.telegram_id === telegramId)) return { top: entries, me: null };
   return { top: entries, me: toEntry(me) };
 }
 
