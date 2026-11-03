@@ -5,6 +5,7 @@ const SUIT_SYMBOL = { D: '♦', C: '♣', H: '♥', S: '♠' };
 const SUIT_NAME = { D: 'Diamonds', C: 'Clubs', H: 'Hearts', S: 'Spades' };
 const SUITS = ['D', 'C', 'H', 'S']; // low to high
 const RANKS = ['3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2']; // low to high
+const RANK_NAME = { J: 'Jack', Q: 'Queen', K: 'King', A: 'Ace' };
 const SEAT_COLORS = ['#f5c451', '#5ec8f2', '#c084fc', '#6ee7a8'];
 const KIND_NAME = {
   single: 'Single', pair: 'Pair', triple: 'Triple', straight: 'Straight', flush: 'Flush',
@@ -24,9 +25,12 @@ const isRed = (c) => suitOf(c) === 'H' || suitOf(c) === 'D';
 const label = (c) => rankOf(c) + SUIT_SYMBOL[suitOf(c)];
 const cardText = (cards) => cards.map(label).join(' ');
 const sortHand = (cards) => [...cards].sort((a, b) => power(a) - power(b));
+const sortBySuit = (cards) => [...cards].sort((a, b) => SUITS.indexOf(suitOf(a)) - SUITS.indexOf(suitOf(b)) || rankIndex(a) - rankIndex(b));
 const isOver = (g) => g.phase === 'done';
 const seatColor = (seat) => SEAT_COLORS[seat % SEAT_COLORS.length];
 const initialOf = (name) => ([...String(name || '?').trim()][0] || '?').toUpperCase();
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** Classifies a set of cards, or null when it is not a legal combination. */
 function classify(cards) {
@@ -72,6 +76,45 @@ function whyNot(g, cards) {
   return null;
 }
 
+/** Same-size strength order (weakest first). */
+const comboOrder = (a, b) => (a.size === 5 && a.tier !== b.tier ? a.tier - b.tier : a.power - b.power);
+
+let hintCache = { key: '', list: [] };
+/**
+ * Every play from my hand that the room would accept right now, weakest first. Following a play,
+ * only same-size answers count; on a lead, five-card hands come first (they are the easiest to miss),
+ * then triples, pairs and singles.
+ */
+function legalPlays(g) {
+  if (!g?.hand || isOver(g)) return [];
+  const hand = sortHand(g.hand);
+  const key = `${hand.join()}|${g.table ? g.table.cards.join() : '-'}|${g.mustInclude || ''}`;
+  if (hintCache.key === key) return hintCache.list;
+  const sizes = g.table ? [g.table.size] : [5, 3, 2, 1];
+  const found = [];
+  const consider = (cards) => {
+    const combo = classify(cards);
+    if (combo && !whyNot(g, cards)) found.push({ cards, combo });
+  };
+  const byRank = new Map();
+  for (const c of hand) byRank.set(rankIndex(c), [...(byRank.get(rankIndex(c)) || []), c]);
+  for (const size of sizes) {
+    if (size === 1) hand.forEach((c) => consider([c]));
+    if (size === 2) for (const g2 of byRank.values()) for (let i = 0; i < g2.length; i++) for (let j = i + 1; j < g2.length; j++) consider([g2[i], g2[j]]);
+    if (size === 3) for (const g3 of byRank.values()) if (g3.length >= 3) for (let i = 0; i < g3.length; i++) for (let j = i + 1; j < g3.length; j++) for (let k = j + 1; k < g3.length; k++) consider([g3[i], g3[j], g3[k]]);
+    if (size === 5) {
+      const n = hand.length;
+      for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) for (let c = b + 1; c < n; c++) for (let d = c + 1; d < n; d++) for (let e = d + 1; e < n; e++) {
+        consider([hand[a], hand[b], hand[c], hand[d], hand[e]]);
+      }
+    }
+  }
+  const rankSize = (x) => sizes.indexOf(x.combo.size);
+  found.sort((x, y) => rankSize(x) - rankSize(y) || comboOrder(x.combo, y.combo));
+  hintCache = { key, list: found.slice(0, 120) };
+  return hintCache.list;
+}
+
 // ---------- DOM helpers ----------
 const $ = (id) => document.getElementById(id);
 function el(tag, cls, text) {
@@ -81,15 +124,59 @@ function el(tag, cls, text) {
   return node;
 }
 
-/** One card face for the hand and the table. `.card-corner` stays the tap target tests aim for. */
+const ICON_PATHS = {
+  sound: '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>',
+  mute: '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  stop: '<rect x="5" y="5" width="14" height="14" rx="2.5"/>',
+  log: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+};
+function setIcon(node, name) {
+  node.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name]}</svg>`;
+}
+
+/**
+ * One card face for every size (hand, table, log, flying copies): a corner index, a mirrored
+ * corner, and a centre pip (court cards get a framed letter). `.card-corner` stays the tap
+ * target tests aim for; `.td-cover` is the card back used while a card flips face up.
+ */
 function cardEl(code, { tag = 'div', mini = false } = {}) {
-  const node = el(tag, `${mini ? 'card-mini' : 'card'} td-card ${isRed(code) ? 'red' : 'black'} suit-${suitOf(code)}`);
+  const r = rankOf(code);
+  const s = suitOf(code);
+  const court = r === 'J' || r === 'Q' || r === 'K';
+  const node = el(tag, `${mini ? 'card-mini' : 'card'} td-card ${isRed(code) ? 'red' : 'black'} suit-${s}${court ? ' td-court' : ''}${r === 'A' ? ' td-ace' : ''}${r === '10' ? ' td-ten' : ''}`);
   node.dataset.card = code;
   const corner = el('span', 'card-corner');
-  corner.append(el('span', 'card-value', rankOf(code)), el('span', 'card-suit', SUIT_SYMBOL[suitOf(code)]));
-  node.append(corner, el('span', 'td-pip', SUIT_SYMBOL[suitOf(code)]));
-  node.setAttribute('aria-label', `${rankOf(code)} of ${SUIT_NAME[suitOf(code)]}`);
+  corner.append(el('span', 'card-value', r), el('span', 'card-suit', SUIT_SYMBOL[s]));
+  const foot = el('span', 'td-corner-b');
+  foot.setAttribute('aria-hidden', 'true');
+  foot.append(el('span', null, r), el('span', null, SUIT_SYMBOL[s]));
+  let art;
+  if (court) {
+    art = el('span', 'td-court-art');
+    art.append(el('span', 'td-court-letter', r), el('span', 'td-court-suit', SUIT_SYMBOL[s]));
+  } else {
+    art = el('span', 'td-pip', SUIT_SYMBOL[s]);
+  }
+  const cover = el('span', 'td-cover');
+  node.append(corner, art, foot, cover);
+  node.setAttribute('aria-label', `${RANK_NAME[r] ?? r} of ${SUIT_NAME[s]}`);
   return node;
+}
+
+/** A small inline card chip for the log, previews and results. */
+function chipEl(code) {
+  const chip = el('span', `td-chip-card ${isRed(code) ? 'red' : 'black'}`, label(code));
+  chip.setAttribute('aria-label', `${RANK_NAME[rankOf(code)] ?? rankOf(code)} of ${SUIT_NAME[suitOf(code)]}`);
+  return chip;
+}
+function chipsEl(cards) {
+  const row = el('span', 'td-chips');
+  row.append(...cards.map(chipEl));
+  return row;
+}
+function backEl(cls = '') {
+  return el('i', `td-back ${cls}`.trim());
 }
 
 function toast(message, kind = '') {
@@ -97,7 +184,15 @@ function toast(message, kind = '') {
   const node = el('div', `td-toast ${kind}`.trim(), message);
   stack.append(node);
   while (stack.children.length > 3) stack.firstChild.remove();
-  setTimeout(() => node.remove(), kind === 'error' ? 3800 : 2600);
+  setTimeout(() => { node.classList.add('out'); setTimeout(() => node.remove(), 260); }, kind === 'error' ? 3800 : 2600);
+}
+
+/** Screen-reader play-by-play. */
+function announce(text) {
+  if (!text) return;
+  const live = $('sr-live');
+  live.append(el('p', null, text));
+  while (live.children.length > 4) live.firstChild.remove();
 }
 
 // ---------- Identity ----------
@@ -136,6 +231,10 @@ let joinBlocked = null;
 let hasSeenGame = false;
 let lastFocus = null;
 const lobbySeen = new Set();
+/** Hand order on screen: 'rank' (power order) or 'suit'. Purely cosmetic. */
+let sortMode = store.get('taidiSort') === 'suit' ? 'suit' : 'rank';
+/** Which suggestion the Hint button showed last, for the current hand and table. */
+let hintAt = { key: '', index: -1 };
 
 // ---------- Sound (synthesised, off by default) ----------
 const sfx = (() => {
@@ -185,6 +284,7 @@ const sfx = (() => {
   }
   const SOUNDS = {
     card: () => noise({ dur: 0.07, gain: 0.1, freq: 2600 }),
+    pick: () => tone(1320, { dur: 0.04, type: 'triangle', gain: 0.025 }),
     deal: () => [0, 0.06, 0.12, 0.18].forEach((d) => noise({ at: d, dur: 0.05, gain: 0.07, freq: 3000 })),
     pass: () => tone(240, { dur: 0.12, type: 'triangle', gain: 0.05, slide: -60 }),
     trick: () => { noise({ dur: 0.16, gain: 0.08, freq: 1800 }); tone(520, { dur: 0.16, type: 'triangle', gain: 0.05, slide: 260 }); },
@@ -218,9 +318,9 @@ function vibrate(pattern) {
 
 // ---------- Animation layer ----------
 // Every state is rendered immediately (the table is always authoritative). Animations then
-// replay the new log entries on top: cards fly from hand or seat to the felt, passes and
-// combos float up, a won trick sweeps to its leader. They never take input, and a newer
-// state finishes them instantly.
+// replay the new log entries on top: cards fly from hand or seat to the felt (flipping face
+// up when they come from another player), passes and combos float up, a won trick sweeps to
+// its leader. They never take input, and a newer state finishes them instantly.
 const FLY = 380;
 const fx = { timers: new Set(), anims: new Set() };
 
@@ -259,10 +359,11 @@ function cardBox(r, w = 34) {
   return { left: c.x - w / 2, top: c.y - h / 2, width: w, height: h, angle: 0 };
 }
 const plateOf = (seat) => document.querySelector(`#opponents .td-plate[data-seat="${seat}"]`);
+const avatarOf = (seat) => plateOf(seat)?.querySelector('.td-avatar') ?? plateOf(seat);
 
-/** Where a seat "is" on screen: its plate, or my own hand. */
+/** Where a seat "is" on screen: its avatar on the felt, or my own hand. */
 function anchorOf(seat) {
-  const r = seat === view.you.seat ? R($('hand')) ?? R($('turn-banner')) : R(plateOf(seat));
+  const r = seat === view.you.seat ? R($('hand')) ?? R($('turn-banner')) : R(avatarOf(seat));
   return r ? centerOf(r) : null;
 }
 
@@ -298,17 +399,20 @@ function flyNode(node, from, to, { delay = 0, duration = 420, rotate = [0, 0], f
   a.finished.then(() => { node.remove(); onLand?.(); }).catch(() => node.remove());
 }
 
-/** FLIP: a real element appears to travel from `from` to where it now sits. */
-function flipFrom(node, from, { delay = 0, duration = FLY, arc = 0 } = {}) {
+/** FLIP: a real element appears to travel from `from` to where it now sits; `flip` turns it face up on the way. */
+function flipFrom(node, from, { delay = 0, duration = FLY, arc = 0, flip = false } = {}) {
   const to = R(node);
   if (!to || !from) return;
   const dx = from.left + from.width / 2 - (to.left + to.width / 2);
   const dy = from.top + from.height / 2 - (to.top + to.height / 2);
   const s = from.width / to.width;
+  const mid = flip ? ' scaleX(0.06)' : '';
   const frames = [{ transform: `translate(${dx}px, ${dy}px) scale(${s}) rotate(${from.angle || 0}deg)`, zIndex: 5 }];
-  if (arc) frames.push({ transform: `translate(${dx / 2}px, ${dy / 2 - arc}px) scale(${(1 + s) / 2}) rotate(${(from.angle || 0) / 2}deg)`, zIndex: 5, offset: 0.55 });
+  if (arc || flip) frames.push({ transform: `translate(${dx / 2}px, ${dy / 2 - arc}px) scale(${(1 + s) / 2}) rotate(${(from.angle || 0) / 2}deg)${mid}`, zIndex: 5, offset: 0.55 });
   frames.push({ transform: 'none', zIndex: 5 });
   anim(node, frames, { duration, delay, easing: 'cubic-bezier(.2,.75,.25,1)', fill: 'backwards' });
+  const cover = flip && node.querySelector('.td-cover');
+  if (cover) anim(cover, [{ opacity: 1 }, { opacity: 1, offset: 0.54 }, { opacity: 0, offset: 0.56 }, { opacity: 0 }], { duration, delay, fill: 'backwards' });
 }
 
 function floatText(text, point, { cls = '', delay = 0, duration = 1100, rise = 48 } = {}) {
@@ -349,7 +453,7 @@ function burst(point, { n = 16, colors = ['#f5c451', '#fff3c4', '#ff9f43'], dela
 /** A big caption over the felt ("Your turn", "X opens", …). */
 function callout(text, kind = '', delay = 0, { sub = '', y = 0.5, duration = 1400 } = {}) {
   at(delay, () => {
-    const t = R($('td-table'));
+    const t = R($('td-felt')) ?? R($('td-table'));
     if (!t) return;
     const n = el('div', `td-callout ${kind}`.trim());
     n.append(el('span', 'td-callout-main', text));
@@ -394,7 +498,7 @@ function shake(node) {
 function confetti(delay = 0) {
   at(delay, () => {
     const colors = ['#f5c451', '#ff6b6b', '#5ec8f2', '#6ee7a8', '#c084fc', '#fff3c4'];
-    for (let i = 0; i < 56; i++) {
+    for (let i = 0; i < 64; i++) {
       const p = el('i', 'td-confetti');
       Object.assign(p.style, { left: `${Math.random() * innerWidth}px`, top: '-16px', background: colors[i % colors.length] });
       $('fx').append(p);
@@ -408,22 +512,23 @@ function confetti(delay = 0) {
   });
 }
 
-/** Where a played card starts: my own card's spot in hand, otherwise its owner's plate. */
+/** Where a played card starts: my own card's spot in hand, otherwise its owner's card backs. */
 function sourceBox(code, seat, ctx, i = 0, n = 1) {
   if (seat === ctx.me) {
     const h = ctx.scene.hand.get(code);
     if (h) return h;
   }
-  const pr = R(plateOf(seat)) ?? (seat === ctx.me ? R($('hand')) : null);
+  const plate = plateOf(seat);
+  const pr = R(plate?.querySelector('.td-backs')) ?? R(avatarOf(seat)) ?? (seat === ctx.me ? R($('hand')) : null);
   if (!pr) return null;
-  const b = cardBox(pr, 30);
-  b.left += (i - (n - 1) / 2) * 12;
+  const b = cardBox(pr, 26);
+  b.left += (i - (n - 1) / 2) * 10;
   return b;
 }
 
 /** The middle of the felt, where plays land. */
 function feltBox(w = 56) {
-  const r = R($('table-play')) ?? R($('td-table'));
+  const r = R($('table-play')) ?? R($('td-felt'));
   return r ? cardBox(r, w) : null;
 }
 
@@ -446,7 +551,7 @@ function animateTransition(prev, next, scene) {
   // Turn hand-off cues.
   const myTurn = me >= 0 && g.currentSeat === me && !isOver(g);
   if (myTurn && (pg.currentSeat !== me || pg.phase !== 'play')) {
-    callout('Your turn', '', t + 40, { duration: 1000 });
+    callout(g.table ? 'Your turn' : 'Your lead', '', t + 40, { duration: 1000, sub: g.table ? `Beat the ${KIND_NAME[g.table.kind].toLowerCase()} or pass` : 'Play anything' });
     sfx.play('turn', t + 40);
     at(t + 40, () => vibrate(30));
     t += 120;
@@ -464,9 +569,29 @@ function runEffect(e, ctx, t) {
   return t;
 }
 
+/**
+ * Plays that landed (or are still landing) on the felt earlier in this update leave at time `t`:
+ * covered by a newer play, or swept to whoever takes the table (`to`). Entries are registered
+ * when their flight is scheduled, so a card still in the air is never left behind.
+ */
+function clearHeld(ctx, t, to = null, rotate = 0) {
+  const entries = ctx.held.splice(0);
+  if (!entries.length) return;
+  at(t, () => {
+    for (const h of entries) {
+      h.gone = true;
+      h.node?.remove();
+      const copy = cardEl(h.code, { mini: true });
+      if (to) flyNode(copy, h.box, to, { duration: 460, fadeOut: true, easing: 'cubic-bezier(.5,0,.75,.4)', rotate: [0, rotate] });
+      else flyNode(copy, h.box, { ...h.box, width: h.box.width * 0.86, height: h.box.height * 0.86 }, { duration: FLY, fadeOut: true, easing: 'ease-in' });
+    }
+  });
+}
+
 function fxPlay(e, ctx, t) {
   const sources = e.cards.map((c, i) => sourceBox(c, e.seat, ctx, i, e.cards.length));
   const finalTable = ctx.g.table?.cards.join(',') === e.cards.join(',') ? [...document.querySelectorAll('#table-play .card-mini')] : null;
+  const fromOther = e.seat !== ctx.me;
 
   // What was lying there before is covered up by the new play.
   if (!ctx.tableHandled && ctx.scene.table.length) {
@@ -475,38 +600,44 @@ function fxPlay(e, ctx, t) {
       flyNode(cardEl(old.code, { mini: true }), old.rect, { ...old.rect, width: old.rect.width * 0.86, height: old.rect.height * 0.86 }, { delay: t, duration: FLY, fadeOut: true, easing: 'ease-in' });
     }
   }
+  clearHeld(ctx, t);
   sfx.play('card', t);
   if (finalTable) {
-    finalTable.forEach((node, i) => flipFrom(node, sources[i], { delay: t + i * 55, arc: 26 }));
+    finalTable.forEach((node, i) => flipFrom(node, sources[i], { delay: t + i * 55, arc: 26, flip: fromOther, duration: fromOther ? FLY + 80 : FLY }));
+    anim($('play-tag'), [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 260, delay: t + FLY, fill: 'backwards' });
   } else {
     // This play was answered or cleared within the same update: let it land on the felt, then wait to be swept.
     const target = feltBox(54);
     e.cards.forEach((c, i) => {
       const box = target ? { ...target, left: target.left + (i - (e.cards.length - 1) / 2) * 30 } : null;
-      flyNode(cardEl(c, { mini: true }), sources[i], box, {
+      const flying = cardEl(c, { mini: true });
+      const entry = { code: c, box, node: flying, gone: false };
+      if (box) ctx.held.push(entry);
+      flyNode(flying, sources[i], box, {
         delay: t + i * 55, duration: FLY, arc: 26,
         onLand: () => {
-          if (!box) return;
+          if (!box || entry.gone) return;
           const rest = cardEl(c, { mini: true });
           rest.classList.add('td-fly');
           Object.assign(rest.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
           rest.style.setProperty('--w', `${box.width}px`);
           $('fx').append(rest);
-          ctx.held.push({ node: rest, code: c, box });
+          entry.node = rest;
         },
       });
     });
   }
 
   let end = t + FLY + (e.cards.length - 1) * 55;
-  const anchor = feltBox(54);
-  const point = anchor ? centerOf({ left: anchor.left, top: anchor.top - 14, width: anchor.width, height: anchor.height }) : null;
+  // Combo names pop over the middle of the cards that were just played.
+  const zone = R($('table-play'));
+  const point = zone ? centerOf(zone) : null;
   const plate = plateOf(e.seat);
-  if (plate && e.seat !== ctx.me) pulse(plate, t + FLY);
+  if (plate && fromOther) pulse(avatarOf(e.seat), t + FLY);
   if (e.kind === 'quads' || e.kind === 'straightflush') {
     floatText(`${KIND_NAME[e.kind]}!`, point, { cls: 'td-float-big', delay: end - 120, duration: 1500, rise: 60 });
     burst(point, { n: 22, delay: end - 80, spread: 120 });
-    overlayFlash('td-flash-big', end - 100, R($('td-table')), 800);
+    overlayFlash('td-flash-big', end - 100, R($('td-felt')), 800);
     sfx.play('big', end - 100);
     at(end, () => vibrate([20, 40, 30]));
     end += 260;
@@ -515,12 +646,16 @@ function fxPlay(e, ctx, t) {
     burst(point, { n: 10, delay: end - 80, spread: 80 });
     sfx.play('combo', end - 100);
     end += 160;
+  } else if (e.cards.every((c) => rankOf(c) === '2')) {
+    // 2s are the top of their kind: give them a little weight.
+    floatText({ 1: 'Big 2!', 2: 'Pair of 2s!', 3: 'Three 2s!' }[e.cards.length], point, { cls: 'td-float-combo', delay: end - 120, duration: 1200 });
+    end += 120;
   }
   // The last time this seat plays in this update: warn if they're nearly out.
   const lastPlayOfSeat = [...ctx.events].reverse().find((x) => x.t === 'play' && x.seat === e.seat);
   const left = ctx.g.handCounts[e.seat];
   if (lastPlayOfSeat === e && left === 1 && !isOver(ctx.g)) {
-    floatText('1 card left!', anchorOf(e.seat), { cls: 'td-float-out', delay: end - 60, duration: 1300 });
+    floatText(e.seat === ctx.me ? 'Last card!' : '1 card left!', anchorOf(e.seat), { cls: 'td-float-out', delay: end - 60, duration: 1300 });
     sfx.play('warn', end - 60);
     end += 120;
   }
@@ -538,18 +673,17 @@ function fxTrick(e, ctx, t) {
   // Everything lying on the felt is swept to whoever takes it.
   const winnerPoint = anchorOf(e.seat);
   const to = winnerPoint ? { left: winnerPoint.x - 10, top: winnerPoint.y - 14, width: 20, height: 28, angle: 0 } : null;
-  const entries = [...ctx.held];
+  const tilt = e.seat === ctx.me ? 0 : 12;
+  clearHeld(ctx, t, to, tilt);
   if (!ctx.tableHandled) {
     ctx.tableHandled = true;
-    for (const old of ctx.scene.table) entries.push({ code: old.code, box: old.rect, node: null });
+    // Cards that were already on the table before this update: their copies hold the spot until swept.
+    for (const old of ctx.scene.table) {
+      flyNode(cardEl(old.code, { mini: true }), old.rect, to, { delay: t, duration: 460, fadeOut: true, easing: 'cubic-bezier(.5,0,.75,.4)', rotate: [0, tilt] });
+    }
   }
-  for (const h of entries) {
-    h.node?.remove();
-    flyNode(cardEl(h.code, { mini: true }), h.box, to, { delay: t, duration: 460, fadeOut: true, easing: 'cubic-bezier(.5,0,.75,.4)', rotate: [0, e.seat === ctx.me ? 0 : 12] });
-  }
-  ctx.held = [];
   sfx.play('trick', t);
-  if (e.seat !== ctx.me) pulse(plateOf(e.seat), t + 420);
+  if (e.seat !== ctx.me) pulse(avatarOf(e.seat), t + 420);
   floatText(e.seat === ctx.me ? 'You lead' : `${who(e.seat)} leads`, winnerPoint, { cls: 'td-float-lead', delay: t + 380, duration: 1000, rise: 36 });
   return t + 520;
 }
@@ -566,15 +700,16 @@ function fxWon(e, ctx, t) {
     sfx.play(ctx.me >= 0 ? 'lose' : 'win', t);
   }
   burst(anchorOf(e.seat), { n: 18, delay: t, spread: 110 });
-  overlayFlash('td-flash-big', t, R($('td-table')), 900);
+  overlayFlash('td-flash-big', t, R($('td-felt')), 900);
   return t + 900;
 }
 
-/** A fresh deal: cards fan out from the middle of the table, plates pop in, the opener is called. */
+/** A fresh deal: cards fan out from the middle of the table to every seat, then the opener is called. */
 function dealTimeline(g, me) {
   const from = feltBox(40);
+  const handCards = [...document.querySelectorAll('#hand .hand-card')];
   if (from) {
-    for (const [i, node] of [...document.querySelectorAll('#hand .hand-card')].entries()) {
+    for (const [i, node] of handCards.entries()) {
       const to = R(node);
       if (!to) continue;
       const angle = parseFloat(node.style.getPropertyValue('--card-angle')) || 0;
@@ -586,11 +721,19 @@ function dealTimeline(g, me) {
         { transform: `rotate(${angle}deg)`, opacity: 1 },
       ], { duration: 460, delay: 120 + i * 38, easing: 'cubic-bezier(.2,.75,.25,1)', fill: 'backwards' });
     }
+    // Card backs travel to every other seat.
+    document.querySelectorAll('#opponents .td-plate').forEach((p, s) => {
+      const target = R(p.querySelector('.td-backs')) ?? R(p.querySelector('.td-avatar'));
+      if (!target) return;
+      for (let k = 0; k < 4; k++) {
+        flyNode(backEl('td-fly-back'), from, cardBox(target, 18), { delay: 120 + s * 60 + k * 110, duration: 420, arc: 18, fadeOut: true });
+      }
+    });
   }
   document.querySelectorAll('#opponents .td-plate').forEach((p, i) => {
-    anim(p, [{ opacity: 0, transform: 'translateY(-10px) scale(.9)' }, { opacity: 1, transform: 'none' }], { duration: 360, delay: i * 90, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'backwards' });
+    anim(p, [{ opacity: 0, transform: 'scale(.85)' }, { opacity: 1, transform: 'none' }], { duration: 360, delay: i * 90, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'backwards' });
   });
-  const n = document.querySelectorAll('#hand .hand-card').length;
+  const n = handCards.length;
   const dealt = 160 + Math.max(n, 4) * 38 + 380;
   sfx.play('deal', 100);
   const opener = g.currentSeat;
@@ -670,6 +813,7 @@ function onState(next) {
     view = next;
     renderTopBar();
     renderOpponents(next.game);
+    renderMe(next.game);
     renderBanner(next.game, next.you.seat >= 0 && next.game.currentSeat === next.you.seat && !isOver(next.game));
     if (!overPending) syncOverModal();
     return;
@@ -697,13 +841,17 @@ function onState(next) {
     overDismissed = false;
     selected.clear();
   }
-  // Selections only make sense on my own turn, and only for cards still in hand.
+  // A selection can be lined up while others play; it only keeps cards still in hand.
   const g = next.game;
   const pg = prev?.game;
-  if (!g || !pg || g.currentSeat !== pg.currentSeat || g.phase !== pg.phase) selected.clear();
+  if (!g || isOver(g)) selected.clear();
   if (g?.hand) selected = new Set([...selected].filter((c) => g.hand.includes(c)));
   overPending = !!g && isOver(g);
   render();
+  if (g && pg && prev.gameNo === next.gameNo) {
+    const lastSeq = pg.log.at(-1)?.seq ?? 0;
+    announce(g.log.filter((e) => e.seq > lastSeq).slice(-4).map(describe).join('. '));
+  }
   const t = g ? animateTransition(prev, next, scene) : 0;
   if (overPending) at(t > 0 ? t + 500 : 0, () => { overPending = false; syncOverModal(); });
 }
@@ -712,6 +860,23 @@ function onState(next) {
 function showScreen(id) {
   for (const sc of document.querySelectorAll('.screen')) sc.classList.toggle('active', sc.id === id);
   document.body.dataset.screen = id;
+  if (id !== 'screen-game') setLogOpen(false);
+  keepAwake(id === 'screen-game' && !!view?.game && !isOver(view.game));
+}
+
+// Phones dim and lock mid-game while others think: hold a screen wake lock during play.
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on && !wakeLock && navigator.wakeLock && document.visibilityState === 'visible') {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener?.('release', () => { wakeLock = null; });
+    } else if (!on && wakeLock) {
+      const lock = wakeLock;
+      wakeLock = null;
+      await lock.release();
+    }
+  } catch { wakeLock = null; /* not allowed or unsupported */ }
 }
 
 function render() {
@@ -730,17 +895,18 @@ function render() {
 
 function renderTopBar() {
   const sound = $('btn-sound');
-  sound.textContent = sfx.on ? '🔊' : '🔇';
+  setIcon(sound, sfx.on ? 'sound' : 'mute');
   sound.setAttribute('aria-pressed', String(sfx.on));
   sound.title = sfx.on ? 'Sound effects on' : 'Sound effects off';
   const g = view?.game;
   $('btn-end').classList.toggle('hidden', !(g && !isOver(g) && view.you.isHost && view.you.seat >= 0));
+  $('btn-log').classList.toggle('hidden', !g);
 }
 
 // ---------- Lobby ----------
 function renderLobbyLoading() {
   $('lobby-code').textContent = roomCode;
-  $('lobby-players').replaceChildren(el('div', 'player-item td-empty', 'Connecting…'));
+  $('lobby-players').replaceChildren(el('div', 'player-item td-empty td-connecting', 'Connecting…'));
   $('btn-start').classList.add('hidden');
   $('lobby-wait').textContent = '';
   $('lobby-setup').classList.add('hidden');
@@ -751,9 +917,9 @@ function statusDot(connected) {
 }
 
 function avatarEl(p, seat) {
-  const avatar = el('span', 'td-avatar', initialOf(p.name));
+  const avatar = el('span', 'td-avatar', initialOf(p?.name));
   avatar.style.setProperty('--seat-color', seatColor(seat));
-  avatar.append(statusDot(p.connected));
+  if (p) avatar.append(statusDot(p.connected));
   return avatar;
 }
 
@@ -765,16 +931,17 @@ function renderLobby() {
   const list = $('lobby-players');
   list.replaceChildren();
   players.forEach((p, seat) => {
-    const item = el('div', 'player-item td-player');
+    const item = el('div', `player-item td-player${p.id === you.id ? ' is-you' : ''}`);
     item.style.setProperty('--seat-color', seatColor(seat));
     const identity = el('div', 'lobby-identity');
     identity.append(el('span', 'lobby-player-name', p.name));
-    if (p.id === you.id) identity.append(el('span', 'td-you', 'you'));
     const meta = el('div', 'lobby-meta');
+    if (p.id === you.id) meta.append(el('span', 'td-you', 'you'));
     if (p.isHost) meta.append(el('span', 'td-host', '👑 Host'));
     // Same signal as Bridge: non-members still play and are rated, but don't count for this group.
     if (p.isGroupMember === false) meta.append(el('span', 'not-ranked-badge', '⚠️ not in group'));
     if (!p.connected) meta.append(el('span', 'td-offline', 'offline'));
+    if (!meta.childElementCount) meta.append(el('span', 'td-seat-no', `Seat ${seat + 1}`));
     const action = el('div', 'lobby-action');
     item.append(avatarEl(p, seat), identity, meta, action);
     if (!lobbySeen.has(p.id)) { lobbySeen.add(p.id); item.classList.add('td-enter'); }
@@ -782,14 +949,18 @@ function renderLobby() {
       const kick = el('button', 'kick-btn', '✕');
       kick.type = 'button';
       kick.setAttribute('aria-label', `Remove ${p.name}`);
+      kick.title = `Remove ${p.name}`;
       kick.onclick = () => send({ type: 'kick', playerId: p.id });
       action.append(kick);
+    } else {
+      item.classList.add('no-action');
     }
     list.append(item);
   });
   for (let i = players.length; i < max; i++) {
-    const open = el('div', 'player-item td-empty');
-    open.append(el('span', 'td-avatar td-avatar-empty', '+'), el('span', null, i < min ? 'Waiting for a player' : 'Open seat'));
+    const open = el('div', `player-item td-empty${i < min ? ' needed' : ''}`);
+    const plus = el('span', 'td-avatar td-avatar-empty', '+');
+    open.append(plus, el('span', 'td-empty-label', i < min ? 'Waiting for a player' : 'Open seat'));
     list.append(open);
   }
 
@@ -798,9 +969,12 @@ function renderLobby() {
   setup.classList.toggle('hidden', n < min);
   if (n >= min) {
     const d = DEAL[n];
-    const parts = [el('div', 'td-setup-mode', `🎴 ${n} players · ${d.each} cards each`), el('div', 'td-setup-note', d.note)];
-    if (view.groupName) parts.push(el('div', 'td-setup-group', `💬 ${view.groupName}`));
-    setup.replaceChildren(...parts);
+    const backs = el('span', 'td-setup-backs');
+    for (let i = 0; i < Math.min(5, n + 1); i++) backs.append(backEl());
+    const text = el('div', 'td-setup-text');
+    text.append(el('div', 'td-setup-mode', `${n} players · ${d.each} cards each`), el('div', 'td-setup-note', d.note));
+    if (view.groupName) text.append(el('div', 'td-setup-group', `💬 ${view.groupName}`));
+    setup.replaceChildren(backs, text);
   }
 
   const seated = you.seat >= 0;
@@ -812,7 +986,7 @@ function renderLobby() {
     takeSeat.classList.add('hidden');
     return;
   }
-  $('btn-start').textContent = `🎴 Start Game (${n} players)`;
+  $('btn-start').textContent = n < min ? `Need ${min - n} more to start` : `Start game · ${n} players`;
   const wait = $('lobby-wait');
   if (!seated && joinBlocked === 'kicked') {
     wait.textContent = 'You were removed from this lobby.';
@@ -842,8 +1016,12 @@ const who = (seat) => (seat === view.you.seat ? 'You' : playerNameOf(seat));
 function renderGame() {
   const g = view.game;
   const myTurn = view.you.seat >= 0 && g.currentSeat === view.you.seat && !isOver(g);
-  $('td-game').classList.toggle('my-turn', myTurn);
+  const game = $('td-game');
+  game.classList.toggle('my-turn', myTurn);
+  game.classList.toggle('watching', view.you.seat < 0);
+  game.dataset.players = String(g.numPlayers);
   renderOpponents(g);
+  renderMe(g);
   renderTable(g);
   renderBanner(g, myTurn);
   renderHand(g, myTurn);
@@ -852,52 +1030,156 @@ function renderGame() {
   renderLog(g);
 }
 
-/** Everyone but me, in turn order after my seat (all seats for a spectator). */
-function otherSeats(n, me) {
-  if (me < 0) return Array.from({ length: n }, (_, i) => i);
-  return Array.from({ length: n - 1 }, (_, i) => (me + 1 + i) % n);
+/**
+ * Seats around the felt, counter-clockwise from the bottom (the next player sits on the right).
+ * A seated player is at the bottom with their hand; a spectator sees every seat on the felt.
+ */
+function seatLayout(n, me) {
+  if (me >= 0) {
+    const pos = { 2: ['top'], 3: ['right', 'left'], 4: ['right', 'top', 'left'] }[n];
+    return Array.from({ length: n - 1 }, (_, i) => ({ seat: (me + 1 + i) % n, pos: pos[i] }));
+  }
+  const pos = { 2: ['bottom', 'top'], 3: ['bottom', 'right', 'left'], 4: ['bottom', 'right', 'top', 'left'] }[n];
+  return Array.from({ length: n }, (_, i) => ({ seat: i, pos: pos[i] }));
+}
+
+/** The plays and passes of the trick in progress (since the table was last cleared). */
+function currentTrick(g) {
+  const out = [];
+  for (let i = g.log.length - 1; i >= 0; i--) {
+    const e = g.log[i];
+    if (e.t === 'trick') break;
+    out.unshift(e);
+  }
+  return out;
+}
+
+/** Each seat's status in the trick in progress: 'top' (owns the table), 'pass', or null. */
+function seatStatus(g) {
+  const status = new Map();
+  if (isOver(g)) return status;
+  if (g.table) status.set(g.table.seat, 'top');
+  // The last `passes` log entries are the passes since the table's play.
+  const passes = g.log.filter((e) => e.t === 'pass').slice(-g.passes);
+  if (g.passes) for (const e of passes) status.set(e.seat, 'pass');
+  return status;
+}
+
+function bubbleFor(g, seat, status) {
+  if (isOver(g)) return g.winner === seat ? ['win', '🏆 Out first'] : null;
+  if (g.currentSeat === seat) return ['think', g.table ? 'Thinking' : 'To lead'];
+  if (status.get(seat) === 'pass') return ['pass', 'Pass'];
+  if (status.get(seat) === 'top') return ['top', 'On top'];
+  return null;
 }
 
 function renderOpponents(g) {
   const box = $('opponents');
   box.replaceChildren();
-  for (const seat of otherSeats(g.numPlayers, view.you.seat)) {
+  const status = seatStatus(g);
+  for (const { seat, pos } of seatLayout(g.numPlayers, view.you.seat)) {
     const p = view.players[seat];
     const active = !isOver(g) && g.currentSeat === seat;
-    const plate = el('div', `td-plate${active ? ' active' : ''}${g.winner === seat ? ' winner' : ''}${p?.connected === false ? ' offline' : ''}`);
-    plate.dataset.seat = String(seat);
-    plate.style.setProperty('--seat-color', seatColor(seat));
-    const avatar = el('span', 'td-avatar', initialOf(p?.name));
-    avatar.style.setProperty('--seat-color', seatColor(seat));
-    const info = el('div', 'td-plate-info');
-    info.append(el('span', 'td-plate-name', p?.name ?? `Player ${seat + 1}`));
     const left = g.handCounts[seat];
-    const count = el('span', `td-plate-count${left <= 3 && left > 0 ? ' low' : ''}`, left === 0 ? 'out!' : `${left} card${left === 1 ? '' : 's'}`);
-    info.append(count);
-    plate.append(avatar, info);
-    if (g.table?.seat === seat && !isOver(g)) plate.append(el('span', 'td-plate-tag', 'leading'));
-    if (g.winner === seat) plate.append(el('span', 'td-plate-tag', '🏆'));
+    const plate = el('div', `td-plate td-seat${active ? ' active' : ''}${g.winner === seat ? ' winner' : ''}${p?.connected === false ? ' offline' : ''}${left === 1 && !isOver(g) ? ' last-card' : ''}${left > 1 && left <= 3 && !isOver(g) ? ' low' : ''}`);
+    plate.dataset.seat = String(seat);
+    plate.dataset.pos = pos;
+    plate.style.setProperty('--seat-color', seatColor(seat));
+    const name = p?.name ?? `Player ${seat + 1}`;
+    plate.setAttribute('aria-label', `${name}: ${left === 0 ? 'out' : plural(left, 'card')}${active ? ', to play' : ''}${p?.connected === false ? ', offline' : ''}`);
+
+    const avatar = avatarEl(p, seat);
+    if (p?.isHost) avatar.append(el('span', 'td-crown', '👑'));
+    const count = el('span', 'td-count', String(left));
+    count.setAttribute('aria-hidden', 'true');
+    avatar.append(count);
+
+    const info = el('div', 'td-plate-info');
+    info.append(el('span', 'td-plate-name', name));
+    info.append(el('span', `td-plate-count${left <= 3 && left > 0 ? ' low' : ''}`, left === 0 ? 'out!' : left === 1 && !isOver(g) ? 'Last card!' : plural(left, 'card')));
+
+    const backs = el('div', 'td-backs');
+    backs.setAttribute('aria-hidden', 'true');
+    const shown = Math.min(left, 13);
+    backs.style.setProperty('--n', String(shown));
+    for (let i = 0; i < shown; i++) backs.append(backEl());
+
+    plate.append(avatar, info, backs);
+    const bubble = bubbleFor(g, seat, status);
+    if (bubble) {
+      const b = el('span', `td-bubble td-bubble-${bubble[0]}`, bubble[1]);
+      if (bubble[0] === 'think') b.append(el('i', 'td-dots'));
+      plate.append(b);
+    }
+    if (p?.connected === false) plate.append(el('span', 'td-plate-tag td-offline-tag', 'offline'));
     box.append(plate);
   }
+}
+
+/** My own plate in the hand dock: who I am, how many cards I hold, and my trick status. */
+function renderMe(g) {
+  const box = $('me-plate');
+  const me = view.you.seat;
+  if (me < 0) { box.replaceChildren(el('span', 'td-me-watch', '👀 Spectating')); return; }
+  const p = view.players[me];
+  const left = g.handCounts[me];
+  const avatar = avatarEl(p, me);
+  const info = el('div', 'td-me-info');
+  info.append(el('span', 'td-me-name', 'You'), el('span', `td-me-count${left <= 3 && left > 0 ? ' low' : ''}`, left === 0 ? 'out!' : plural(left, 'card')));
+  box.replaceChildren(avatar, info);
+  const status = seatStatus(g).get(me);
+  if (status && g.currentSeat !== me) box.append(el('span', `td-bubble td-bubble-${status}`, status === 'pass' ? 'Pass' : 'On top'));
 }
 
 function renderTable(g) {
   const meta = $('table-meta');
   const bits = [];
-  if (g.exposed) bits.push(`Face-up card: ${label(g.exposed)}`);
-  if (g.unused) bits.push(`${g.unused} cards out of play`);
-  if (view.you.seat >= 0) bits.push(`Your cards: ${g.handCounts[view.you.seat]}`);
-  meta.replaceChildren(...bits.map((b) => el('span', 'td-chip', b)));
+  if (g.exposed) {
+    const chip = el('span', 'td-chip td-chip-exposed');
+    chip.append('Face-up ', chipEl(g.exposed));
+    bits.push(chip);
+  }
+  if (g.unused) bits.push(el('span', 'td-chip', `${g.unused} cards out of play`));
+  meta.replaceChildren(...bits);
+
+  // Earlier plays of this trick lie underneath, slightly askew.
+  const trick = currentTrick(g).filter((e) => e.t === 'play');
+  const earlier = g.table ? trick.slice(0, -1).slice(-3) : [];
+  $('trick-pile').replaceChildren(...earlier.map((e, i) => {
+    const group = el('div', 'td-pile-play');
+    const tilt = ((e.seq * 37) % 15) - 7;
+    group.style.setProperty('--tilt', `${tilt}deg`);
+    group.style.setProperty('--depth', String(earlier.length - i));
+    for (const code of e.cards) group.append(cardEl(code, { mini: true }));
+    return group;
+  }));
 
   const play = $('table-play');
   const caption = $('table-caption');
+  const tag = $('play-tag');
   play.replaceChildren();
+  play.dataset.size = String(g.table?.cards.length ?? 0);
   if (g.table) {
     for (const code of g.table.cards) play.append(cardEl(code, { mini: true }));
+    tag.replaceChildren(el('i', 'td-tag-dot'), el('span', 'td-tag-name', who(g.table.seat)), el('span', 'td-tag-kind', KIND_NAME[g.table.kind]));
+    tag.style.setProperty('--seat-color', seatColor(g.table.seat));
+    tag.classList.remove('hidden');
     caption.textContent = `${who(g.table.seat)} played a ${KIND_NAME[g.table.kind].toLowerCase()}${g.passes ? ` · ${g.passes} pass${g.passes === 1 ? '' : 'es'}` : ''}`;
   } else {
-    play.append(el('div', 'td-empty-table', isOver(g) ? '—' : 'Table is clear'));
-    caption.textContent = isOver(g) ? '' : g.mustInclude ? `${who(g.currentSeat)} must open with the ${label(g.mustInclude)}` : `${who(g.currentSeat)} leads — any play`;
+    tag.classList.add('hidden');
+    const empty = el('div', 'td-empty-table');
+    if (isOver(g)) {
+      empty.append(el('span', 'td-empty-main', 'Game over'));
+    } else if (g.mustInclude) {
+      const ghost = cardEl(g.mustInclude, { mini: true });
+      ghost.classList.replace('card-mini', 'td-ghost-card');
+      empty.append(ghost, el('span', 'td-empty-main', 'Opening play'));
+    } else {
+      empty.append(el('span', 'td-empty-main', 'Free lead'), el('span', 'td-empty-sub', 'Any single, pair, triple or five'));
+    }
+    play.append(empty);
+    const leader = g.currentSeat === view.you.seat ? 'You lead' : `${playerNameOf(g.currentSeat)} leads`;
+    caption.textContent = isOver(g) ? '' : g.mustInclude ? `${who(g.currentSeat)} must open with the ${label(g.mustInclude)}` : `${leader} — any play`;
   }
 }
 
@@ -917,44 +1199,85 @@ function renderBanner(g, myTurn) {
 }
 
 // ---------- Hand ----------
+const displayOrder = (cards) => (sortMode === 'suit' ? sortBySuit(cards) : sortHand(cards));
+
+/**
+ * Lays the hand out in pixels: one gently arced row, or two flat rows when a 17-card hand
+ * would otherwise hide the card indices on a narrow phone. Every card keeps its top-left index
+ * visible (that is where taps land).
+ */
 function fanLayout(container, n) {
   const width = container.clientWidth || 340;
-  const wide = width >= 600;
-  const cardW = Math.round(Math.min(wide ? 92 : 70, Math.max(44, width / (wide ? 8 : 6))));
-  // Keep the rotated outer cards inside the container (their corners swing ~20% of a card outwards).
-  const usable = width - cardW * 1.4;
-  const spacing = n > 1 ? Math.min(cardW * 0.8, usable / (n - 1)) : 0;
-  const mid = (n - 1) / 2;
-  const step = n > 1 ? Math.min(4, 22 / (n - 1)) : 0;
-  const arc = cardW * 0.02;
-  const lift = 20;
+  const short = innerHeight < 560;
+  const wide = width >= 700;
+  const pad = 6;
+  const minSlice = 0.4;
+  const byHeight = Math.max(40, Math.round((innerHeight * (short ? 0.16 : 0.19)) / 1.4));
+  let cardW = Math.min(Math.round(clamp(width / (wide ? 9.5 : 6.1), 48, wide ? 94 : 86)), byHeight);
+  const fits = (w, k) => k <= 1 || (width - 2 * pad - w) / (k - 1) >= w * minSlice;
+  let rows = 1;
+  if (!fits(cardW, n)) {
+    const shrunk = Math.floor((width - 2 * pad) / (1 + (n - 1) * minSlice));
+    if (shrunk >= 50 || n <= 13 || short) cardW = Math.max(38, Math.min(cardW, shrunk));
+    else {
+      rows = 2;
+      cardW = Math.min(Math.round(clamp(width / 5.2, 48, 80)), byHeight + 8);
+    }
+  }
+  const cardH = cardW * 1.4;
+  const perRow = Math.ceil(n / rows);
+  const spacing = perRow > 1 ? Math.min(cardW * 0.68, (width - 2 * pad - cardW) / (perRow - 1)) : 0;
+  const rowGap = cardH * 0.5;
+  // Short screens lay the cards flat: every pixel of height goes to the table.
+  const step = rows === 1 && n > 1 && !short ? Math.min(1.6, 16 / (n - 1)) : 0;
+  const arc = rows === 1 && !short ? cardW * 0.008 : 0;
+  const lift = Math.round(cardW * 0.24);
+  const mid = (perRow - 1) / 2;
   container.style.setProperty('--hand-card-width', `${cardW}px`);
+  container.style.setProperty('--hand-lift', `${lift}px`);
   container.style.setProperty('--corner-font', `${Math.round(cardW * 0.27)}px`);
-  container.style.height = `${Math.round(cardW * 1.4 + lift + arc * mid * mid + 8)}px`;
-  return (i) => ({ left: width / 2 + (i - mid) * spacing - cardW / 2, top: lift + arc * (i - mid) ** 2, angle: (i - mid) * step });
+  container.style.height = `${Math.round(lift + (rows - 1) * rowGap + cardH + arc * mid * mid + 6)}px`;
+  container.dataset.rows = String(rows);
+  return (i) => {
+    const row = rows === 2 && i >= perRow ? 1 : 0;
+    const j = row ? i - perRow : i;
+    const count = row ? n - perRow : perRow;
+    const m = (count - 1) / 2;
+    return { left: width / 2 + (j - m) * spacing - cardW / 2, top: lift + row * rowGap + arc * (j - m) ** 2, angle: (j - m) * step };
+  };
 }
 
 function handCardEl(code) {
   const node = cardEl(code, { tag: 'button' });
   node.type = 'button';
   node.classList.add('hand-card');
-  node.addEventListener('click', () => onCardTap(code));
+  // Mouse and touch pick cards on pointerdown (see the hand's pointer handlers); a keyboard
+  // Enter/Space arrives as a click with no pointer detail and no pointer press just before it.
+  node.addEventListener('click', (e) => { if (e.detail === 0 && performance.now() - lastPointerPick > 600) onCardTap(code); });
   return node;
 }
+
+const canPick = () => {
+  const g = view?.game;
+  return !!g && !isOver(g) && view.you.seat >= 0 && !!g.hand;
+};
 
 /** Keyed: surviving cards keep their buttons (focus, transitions), new ones are inserted in order. */
 function renderHand(g, myTurn) {
   const hand = $('hand');
   if (!g.hand) {
-    hand.style.height = '64px';
+    hand.style.height = 'auto';
+    hand.classList.remove('interactive');
     hand.replaceChildren(el('div', 'td-hand-empty', 'You are watching this game.'));
     return;
   }
-  const cards = sortHand(g.hand);
+  const cards = displayOrder(g.hand);
   hand.classList.toggle('interactive', myTurn);
+  hand.classList.toggle('pickable', canPick());
   for (const node of [...hand.children]) if (!node.classList.contains('hand-card') || !cards.includes(node.dataset.card)) node.remove();
   const nodes = new Map([...hand.children].map((n) => [n.dataset.card, n]));
   const place = fanLayout(hand, cards.length);
+  const hinted = new Set(currentHint()?.cards ?? []);
   cards.forEach((code, i) => {
     const node = nodes.get(code) ?? handCardEl(code);
     if (hand.children[i] !== node) hand.insertBefore(node, hand.children[i] ?? null);
@@ -966,20 +1289,68 @@ function renderHand(g, myTurn) {
     const isSel = selected.has(code);
     node.classList.toggle('is-selected', isSel);
     node.classList.toggle('td-must', !!g.mustInclude && code === g.mustInclude && myTurn);
+    node.classList.toggle('td-hinted', isSel && hinted.has(code));
     node.setAttribute('aria-pressed', String(isSel));
-    node.disabled = !myTurn;
+    node.disabled = isOver(g);
     node.dataset.key = String(i + 1);
   });
   if (!cards.length) hand.append(el('div', 'td-hand-empty', 'Your hand is empty'));
 }
 
-function onCardTap(code) {
+function onCardTap(code, mode = null) {
   const g = view?.game;
-  if (!g || isOver(g)) return;
-  if (selected.has(code)) selected.delete(code);
-  else if (selected.size >= 5) { toast('A play is at most five cards', 'error'); return; }
-  else selected.add(code);
+  if (!canPick() || !g.hand.includes(code)) return false;
+  const on = mode ? mode === 'on' : !selected.has(code);
+  if (on && selected.has(code)) return true;
+  if (!on && !selected.has(code)) return true;
+  if (on && selected.size >= 5) {
+    if (!pickDrag?.warned) toast('A play is at most five cards', 'error');
+    if (pickDrag) pickDrag.warned = true;
+    return false;
+  }
+  if (on) selected.add(code); else selected.delete(code);
+  hintAt.index = -1;
+  sfx.play('pick');
   refreshHandArea();
+  return true;
+}
+
+// Slide-to-select: press a card and drag across others to pick (or drop) them all.
+let pickDrag = null;
+let lastPointerPick = -Infinity;
+function wireHandPointer() {
+  const hand = $('hand');
+  hand.addEventListener('pointerdown', (e) => {
+    if (e.button > 0) return;
+    const card = e.target.closest?.('.hand-card');
+    if (!card || card.disabled || !canPick()) return;
+    const code = card.dataset.card;
+    lastPointerPick = performance.now();
+    pickDrag = { id: e.pointerId, mode: selected.has(code) ? 'off' : 'on', seen: new Set([code]), warned: false };
+    onCardTap(code, pickDrag.mode);
+    try { hand.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
+  });
+  hand.addEventListener('pointermove', (e) => {
+    if (!pickDrag || e.pointerId !== pickDrag.id) return;
+    const under = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('#hand .hand-card');
+    const code = under?.dataset.card;
+    if (!code || pickDrag.seen.has(code)) return;
+    pickDrag.seen.add(code);
+    onCardTap(code, pickDrag.mode);
+  });
+  const end = (e) => { if (pickDrag && e.pointerId === pickDrag.id) pickDrag = null; };
+  hand.addEventListener('pointerup', end);
+  hand.addEventListener('pointercancel', end);
+  hand.addEventListener('lostpointercapture', end);
+  // Arrow keys walk the hand.
+  hand.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const cards = [...hand.querySelectorAll('.hand-card')];
+    const i = cards.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    cards[clamp(i + (e.key === 'ArrowRight' ? 1 : -1), 0, cards.length - 1)].focus();
+  });
 }
 
 function refreshHandArea() {
@@ -991,25 +1362,96 @@ function refreshHandArea() {
   renderActions(g, myTurn);
 }
 
+function currentHint() {
+  const g = view?.game;
+  if (!g || hintAt.index < 0 || hintAt.key !== hintCache.key) return null;
+  return hintCache.list[hintAt.index] ?? null;
+}
+
+function useHint() {
+  const g = view?.game;
+  if (!g || view.you.seat !== g.currentSeat || isOver(g)) return;
+  const list = legalPlays(g);
+  if (!list.length) {
+    toast(g.table ? 'Nothing in your hand beats that — pass' : 'No legal play found', 'error');
+    pulse($('btn-pass'), 0, 1.06);
+    return;
+  }
+  hintAt = { key: hintCache.key, index: hintAt.key === hintCache.key ? (hintAt.index + 1) % list.length : 0 };
+  selected = new Set(list[hintAt.index].cards);
+  sfx.play('pick');
+  refreshHandArea();
+}
+
 function renderPreview(g, myTurn) {
-  const box = $('preview');
-  box.className = 'td-preview';
-  const cards = [...selected];
-  if (!myTurn || !cards.length) { box.textContent = ''; return; }
+  const live = $('preview');
+  const next = previewContent(g, myTurn);
+  // An aria-live region: only touch it when what it says changes, so screen readers don't repeat it.
+  if (live.className === next.className && live.textContent === next.textContent) return;
+  live.className = next.className;
+  live.replaceChildren(...next.childNodes);
+}
+
+/** The line above the hand: guidance, or the selected combination (or why it can't be played). */
+function previewContent(g, myTurn) {
+  const box = el('div', 'td-preview');
+  const cards = sortHand([...selected]);
+  const seated = view.you.seat >= 0 && !!g.hand;
+  if (!seated || isOver(g)) return box;
+  if (!cards.length) {
+    if (!myTurn) {
+      box.classList.add('dim');
+      box.textContent = 'Line up your next play while you wait';
+      return box;
+    }
+    const legal = legalPlays(g);
+    if (g.table && !legal.length) {
+      box.classList.add('warn');
+      box.textContent = `Nothing in your hand beats this ${KIND_NAME[g.table.kind].toLowerCase()} — pass`;
+    } else if (g.table) {
+      box.classList.add('dim');
+      box.textContent = `Beat it with ${g.table.size === 1 ? 'a higher single' : g.table.size === 5 ? 'a stronger five-card hand' : `a higher ${KIND_NAME[g.table.kind].toLowerCase()}`} · ${plural(legal.length, 'option')}`;
+    } else if (g.mustInclude) {
+      box.classList.add('dim');
+      box.textContent = `Your opening play must include the ${label(g.mustInclude)}`;
+    } else {
+      box.classList.add('dim');
+      box.textContent = 'You have the lead — play anything';
+    }
+    return box;
+  }
   const combo = classify(cards);
-  const problem = whyNot(g, cards);
+  const problem = myTurn ? whyNot(g, cards) : (combo ? null : cards.length === 1 ? null : "That isn't a valid combination");
+  const clear = el('button', 'td-clear', '✕');
+  clear.type = 'button';
+  clear.setAttribute('aria-label', 'Clear selection');
+  clear.title = 'Clear selection (Esc)';
+  clear.addEventListener('click', () => { selected.clear(); hintAt.index = -1; refreshHandArea(); });
   if (problem) {
     box.classList.add('bad');
-    box.textContent = problem;
+    box.append(el('span', 'td-preview-text', problem));
   } else {
     box.classList.add('ok');
-    box.textContent = `${KIND_NAME[combo.kind]}: ${cardText(sortHand(cards))}`;
+    const text = el('span', 'td-preview-text');
+    text.append(el('b', null, KIND_NAME[combo.kind]), `: ${cardText(cards)}`);
+    const hint = currentHint();
+    if (hint && hint.cards.length === cards.length && hint.cards.every((c) => selected.has(c))) {
+      text.append(el('span', 'td-preview-extra', ` · hint ${hintAt.index + 1}/${hintCache.list.length}`));
+    } else if (myTurn && g.table) {
+      text.append(el('span', 'td-preview-extra', ` · beats ${cardText(g.table.cards)}`));
+    } else if (!myTurn) {
+      text.append(el('span', 'td-preview-extra', ' · lined up'));
+    }
+    box.append(text);
   }
+  box.append(clear);
+  return box;
 }
 
 function renderActions(g, myTurn) {
   const act = $('btn-act');
   const pass = $('btn-pass');
+  const hint = $('btn-hint');
   const over = isOver(g);
   const seated = view.you.seat >= 0;
   $('action-bar').classList.toggle('hidden', !seated);
@@ -1017,15 +1459,32 @@ function renderActions(g, myTurn) {
     act.textContent = 'Results';
     act.dataset.action = 'results';
     act.disabled = false;
+    act.classList.remove('ready');
     pass.classList.add('hidden');
+    hint.classList.add('hidden');
     return;
   }
   pass.classList.remove('hidden');
+  hint.classList.remove('hidden');
   act.dataset.action = 'play';
-  act.textContent = selected.size ? `Play ${selected.size}` : 'Play';
-  act.disabled = !myTurn || !!whyNot(g, [...selected]);
+  const cards = [...selected];
+  const problem = whyNot(g, cards);
+  const combo = cards.length ? classify(cards) : null;
+  act.textContent = myTurn && combo && !problem ? `Play ${KIND_NAME[combo.kind].toLowerCase()}` : cards.length ? `Play ${cards.length}` : 'Play';
+  act.disabled = !myTurn || !!problem;
+  act.classList.toggle('ready', !act.disabled);
   pass.disabled = !myTurn || !g.canPass;
   pass.title = myTurn && !g.canPass ? 'You are leading — you have to play' : 'Pass this turn (P)';
+  const stuck = myTurn && g.canPass && !legalPlays(g).length;
+  pass.classList.toggle('suggest', stuck);
+  hint.disabled = !myTurn || stuck;
+  const n = myTurn ? legalPlays(g).length : 0;
+  hint.querySelector('.td-hint-label').textContent = currentHint() ? `Hint ${hintAt.index + 1}/${n}` : 'Hint';
+  hint.title = myTurn ? (stuck ? 'Nothing beats the table' : `Suggest a play (H) · ${plural(n, 'option')}`) : 'Hints are available on your turn';
+  const sort = $('btn-sort');
+  sort.textContent = sortMode === 'suit' ? '⇅ Suit' : '⇅ Rank';
+  sort.setAttribute('aria-label', `Sorted by ${sortMode} — switch`);
+  sort.classList.toggle('hidden', !g.hand);
 }
 
 // ---------- Log ----------
@@ -1039,9 +1498,35 @@ function describe(entry) {
   }
 }
 
+function logItem(e) {
+  const li = el('li', `log-${e.t}`);
+  li.style.setProperty('--seat-color', seatColor(e.seat));
+  const name = el('b', 'td-log-who', who(e.seat));
+  switch (e.t) {
+    case 'play':
+      li.append(el('i', 'td-log-dot'), name, ` played ${KIND_NAME[e.kind].toLowerCase()} `, chipsEl(e.cards));
+      break;
+    case 'pass': li.append(el('i', 'td-log-dot'), name, ' passed'); break;
+    case 'trick': li.append(name, ' took the table'); break;
+    case 'won': li.append('🏆 ', name, ' went out first'); break;
+    default: return null;
+  }
+  return li;
+}
+
 function renderLog(g) {
   const list = $('log');
-  list.replaceChildren(...[...g.log].reverse().map((e) => el('li', `log-${e.t}`, describe(e))).filter((li) => li.textContent));
+  const items = [...g.log].reverse().map(logItem).filter(Boolean);
+  list.replaceChildren(...items);
+  if (!items.length) list.append(el('li', 'td-log-empty', 'No plays yet — the opener is up.'));
+}
+
+function setLogOpen(open) {
+  const was = document.body.classList.contains('log-open');
+  document.body.classList.toggle('log-open', open);
+  $('btn-log').setAttribute('aria-expanded', String(open));
+  if (open && !was) requestAnimationFrame(() => $('btn-log-close').focus({ preventScroll: true }));
+  else if (!open && was && document.activeElement?.closest?.('#log-panel')) $('btn-log').focus({ preventScroll: true });
 }
 
 // ---------- Game over ----------
@@ -1072,24 +1557,41 @@ function syncOverModal() {
 }
 
 const ordinal = (n) => `${n}${['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : Math.min(n % 10, 4) % 4]}`;
+const MEDAL = { 1: '🥇', 2: '🥈', 3: '🥉' };
 
 function showOverModal(g) {
-  const youWon = g.winner === view.you.seat;
-  $('over-title').textContent = youWon ? '🏆 You win!' : `${playerNameOf(g.winner)} wins`;
-  $('over-sub').textContent = view.you.seat >= 0 && !youWon ? `You finished ${ordinal(g.placements[view.you.seat])}` : 'First to empty their hand';
+  const me = view.you.seat;
+  const youWon = g.winner === me;
+  const myPlace = me >= 0 ? g.placements[me] : null;
+  $('over-title').textContent = youWon ? 'You win!' : `${playerNameOf(g.winner)} wins`;
+  $('over-sub').textContent = me >= 0 && !youWon ? `You finished ${ordinal(myPlace)}` : 'First to empty their hand';
+  $('over-badge').textContent = youWon ? '🏆' : me < 0 ? '🎴' : MEDAL[myPlace] ?? '🃏';
+  const box = document.querySelector('#modal-over .td-over');
+  box.classList.toggle('outcome-win', youWon);
+  box.classList.toggle('outcome-loss', me >= 0 && !youWon);
   const order = g.placements.map((place, seat) => ({ place, seat })).sort((a, b) => a.place - b.place || a.seat - b.seat);
   const rows = order.map(({ place, seat }) => {
-    const row = el('div', `td-result${seat === view.you.seat ? ' me' : ''}`);
-    row.append(el('span', 'td-result-place', place === 1 ? '🥇' : place === 2 ? '🥈' : place === 3 ? '🥉' : `${place}.`));
-    row.append(el('span', 'td-result-name', who(seat)));
-    row.append(el('span', 'td-result-left', g.handCounts[seat] === 0 ? 'out' : `${g.handCounts[seat]} left`));
+    const row = el('div', `td-result${seat === me ? ' me' : ''}${place === 1 ? ' first' : ''}`);
+    row.style.setProperty('--seat-color', seatColor(seat));
+    row.append(el('span', 'td-result-place', MEDAL[place] ?? `${place}.`));
+    row.append(avatarEl(view.players[seat], seat));
+    const main = el('div', 'td-result-main');
+    main.append(el('span', 'td-result-name', who(seat)));
+    const left = g.handCounts[seat];
+    const held = g.revealed?.[seat];
+    if (left > 0 && held?.length) {
+      const cards = el('span', 'td-result-cards');
+      cards.append(...sortHand(held).map(chipEl));
+      main.append(cards);
+    }
+    row.append(main, el('span', 'td-result-left', left === 0 ? 'out' : `${left} left`));
     return row;
   });
   // The staggered entrance only plays when the panel opens, not on every refresh while it is open.
   const opening = $('modal-over').classList.contains('hidden');
   rows.forEach((r, i) => r.style.setProperty('--i', String(i)));
   $('over-results').replaceChildren(...rows);
-  for (const id of ['over-results', 'over-title', 'over-rating']) $(id).classList.toggle('fresh', opening);
+  for (const id of ['over-results', 'over-title', 'over-rating', 'over-badge']) $(id).classList.toggle('fresh', opening);
   renderRatingResult(opening);
   showModal('modal-over');
 }
@@ -1100,10 +1602,13 @@ function renderRatingResult(opening = false) {
   if (!result || result.gameId !== view.gameId || !result.changes.length) { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
   if (opening) box.classList.add('fresh');
+  const biggest = Math.max(1, ...result.changes.map((c) => Math.abs(c.delta)));
   box.replaceChildren(el('div', 'td-rating-head', 'Rating'), ...[...result.changes].sort((a, b) => a.place - b.place).map((c, i) => {
     const row = el('div', `td-rating-row${c.seat === view.you.seat ? ' me' : ''}`);
     row.style.setProperty('--i', String(i));
-    row.append(el('span', null, c.name || 'Player'), el('b', c.delta >= 0 ? 'up' : 'down', `${c.delta >= 0 ? '+' : ''}${c.delta}`), el('span', 'td-rating-after', String(c.after)));
+    const bar = el('span', `td-rating-bar ${c.delta >= 0 ? 'up' : 'down'}`);
+    bar.style.setProperty('--w', `${Math.round((Math.abs(c.delta) / biggest) * 100)}%`);
+    row.append(el('span', null, c.name || 'Player'), bar, el('b', c.delta >= 0 ? 'up' : 'down', `${c.delta >= 0 ? '+' : ''}${c.delta}`), el('span', 'td-rating-after', String(c.after)));
     return row;
   }));
 }
@@ -1211,6 +1716,7 @@ function leaveRoom(notify = true) {
   roomCode = null;
   view = null;
   selected.clear();
+  fxReset();
   if (socket) socket.onmessage = null;
   clearTimeout(reconnectTimer);
   if (socket) { socket.onclose = null; setTimeout(() => socket.close(), 50); }
@@ -1302,6 +1808,7 @@ async function joinRoom() {
   const code = $('input-code').value.trim().toUpperCase();
   if (!/^[A-Z0-9]{4}$/.test(code)) {
     $('input-code').focus();
+    shake($('input-code'));
     toast('Room codes are 4 characters', 'error');
     return;
   }
@@ -1331,7 +1838,31 @@ function playSelected() {
   send({ type: 'play', cards: [...selected] });
 }
 
+function toggleSort() {
+  sortMode = sortMode === 'rank' ? 'suit' : 'rank';
+  store.set('taidiSort', sortMode);
+  refreshHandArea();
+}
+
 // ---------- Wire up ----------
+// Decorative faces: the home hero and the combo examples in the rules.
+for (const hero of document.querySelectorAll('.td-hero-card[data-card]')) {
+  const face = cardEl(hero.dataset.card);
+  face.classList.add(...hero.classList);
+  face.removeAttribute('aria-label');
+  hero.replaceWith(face);
+}
+for (const li of document.querySelectorAll('.td-combo-list li[data-example]')) {
+  const row = el('span', 'td-combo-cards');
+  row.setAttribute('aria-hidden', 'true');
+  for (const code of li.dataset.example.split(' ')) row.append(cardEl(code, { mini: true }));
+  li.prepend(row);
+}
+setIcon($('btn-rules'), 'help');
+setIcon($('btn-end'), 'stop');
+setIcon($('btn-log'), 'log');
+wireHandPointer();
+
 $('input-name').value = playerName;
 $('btn-create').addEventListener('click', createRoom);
 $('btn-join').addEventListener('click', joinRoom);
@@ -1366,11 +1897,16 @@ $('btn-end').addEventListener('click', async () => {
 });
 $('btn-sound').addEventListener('click', () => { sfx.toggle(); renderTopBar(); });
 $('btn-pass').addEventListener('click', () => send({ type: 'pass' }));
+$('btn-hint').addEventListener('click', useHint);
+$('btn-sort').addEventListener('click', toggleSort);
 $('btn-act').addEventListener('click', () => {
   const action = $('btn-act').dataset.action;
   if (action === 'results') { overDismissed = false; showOverModal(view.game); return; }
   if (action === 'play') playSelected();
 });
+$('btn-log').addEventListener('click', () => setLogOpen(!document.body.classList.contains('log-open')));
+$('btn-log-close').addEventListener('click', () => setLogOpen(false));
+$('log-scrim').addEventListener('click', () => setLogOpen(false));
 $('btn-stats').addEventListener('click', showStats);
 $('btn-stats-home').addEventListener('click', hideStats);
 for (const b of document.querySelectorAll('#td-min-games .min-games-btn')) {
@@ -1394,27 +1930,32 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (confirmDone) confirmDone(false);
     else if (!$('modal-rules').classList.contains('hidden')) hideModal('modal-rules');
-    else if (selected.size && view?.game) { selected.clear(); refreshHandArea(); }
+    else if (document.body.classList.contains('log-open')) setLogOpen(false);
+    else if (selected.size && view?.game) { selected.clear(); hintAt.index = -1; refreshHandArea(); }
     return;
   }
   if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.('input, textarea, select')) return;
   const g = view?.game;
   if (!g || isOver(g) || !$('screen-game').classList.contains('active') || document.querySelector('.td-modal:not(.hidden)')) return;
-  if (view.you.seat < 0 || g.currentSeat !== view.you.seat || !g.hand) return;
+  if (view.you.seat < 0 || !g.hand) return;
   const key = e.key.toLowerCase();
+  const myTurn = g.currentSeat === view.you.seat;
   if (/^[1-9]$/.test(key)) {
-    const code = sortHand(g.hand)[Number(key) - 1];
+    const code = displayOrder(g.hand)[Number(key) - 1];
     if (code) { e.preventDefault(); onCardTap(code); }
+  } else if (key === 's') {
+    toggleSort();
+  } else if (!myTurn) {
+    // Playing, passing and hints wait for my turn.
   } else if (key === 'enter' && !e.target.closest?.('button')) {
     if (!$('btn-act').disabled) { e.preventDefault(); $('btn-act').click(); }
   } else if (key === 'p') {
     const p = $('btn-pass');
     if (!p.disabled) p.click();
+  } else if (key === 'h') {
+    useHint();
   }
 });
-
-// Desktop: keep the log open by default.
-if (matchMedia('(min-width: 1100px)').matches) $('log-details').open = true;
 
 // The fan is laid out in pixels, so re-lay it when the width changes.
 let resizeTimer = 0;
@@ -1426,6 +1967,7 @@ addEventListener('resize', () => {
 // Reconnect promptly when a phone wakes the tab.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && roomCode && ws?.readyState !== WebSocket.OPEN) connect(roomCode); // also takes over from another window
+  if (document.visibilityState === 'visible') keepAwake(document.body.dataset.screen === 'screen-game' && !!view?.game && !isOver(view.game));
 });
 setInterval(() => { if (ws?.readyState === WebSocket.OPEN) ws.send('ping'); }, 25000);
 

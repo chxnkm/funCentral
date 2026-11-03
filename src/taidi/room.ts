@@ -474,6 +474,8 @@ export function buildView(state: RoomState, playerId: string) {
       canPass: game.phase === 'play' && game.table !== null,
       winner: game.winner,
       placements: game.placements,
+      /** Every hand, but only once the game is over (so the results can show what each player was left holding). */
+      revealed: game.phase === 'done' ? game.hands : null,
       log: game.log.slice(-VIEW_LOG),
     },
   };
