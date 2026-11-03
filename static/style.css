@@ -534,54 +534,81 @@ body.has-spectators .screen {
 /* --- Bidding --- */
 .bidding-container {
   padding: 1.25rem; max-width: 500px; width: 100%; text-align: center;
-  background: var(--glass);
+  background: linear-gradient(180deg, rgba(30, 32, 52, 0.92), rgba(18, 19, 30, 0.94));
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
+  border-radius: 22px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(20px);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.bidding-container.my-turn {
+  border-color: rgba(162, 155, 254, 0.55);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(108, 92, 231, 0.25), 0 0 36px rgba(108, 92, 231, 0.18);
 }
 .bidding-container h2 {
-  font-size: 1.3rem; font-weight: 700;
+  font-size: 1.3rem; font-weight: 800;
   color: var(--text); margin-bottom: 0.5rem;
+  letter-spacing: -0.01em;
 }
 .bid-info { margin-bottom: 1rem; }
-#bid-status { font-size: 0.9rem; color: var(--text-dim); }
+#bid-status {
+  display: inline-block; margin-top: 2px; padding: 4px 12px; border-radius: 99px;
+  font-size: 0.88rem; font-weight: 600; color: var(--text-dim);
+}
+#bid-status.is-my-turn {
+  color: #fff; background: linear-gradient(135deg, rgba(108, 92, 231, 0.55), rgba(162, 155, 254, 0.35));
+  box-shadow: 0 0 0 1px rgba(162, 155, 254, 0.5), 0 6px 18px rgba(108, 92, 231, 0.35);
+  animation: bidTurnPulse 2s ease-in-out infinite;
+}
+@keyframes bidTurnPulse { 50% { box-shadow: 0 0 0 1px rgba(162, 155, 254, 0.7), 0 6px 26px rgba(108, 92, 231, 0.6); } }
 #bid-current {
   font-size: 0.85rem; color: var(--accent-light);
-  margin-top: 0.3rem; font-weight: 500;
+  margin-top: 0.4rem; font-weight: 600;
 }
 #bid-history {
-  margin-top: 0.5rem;
+  margin-top: 0.6rem;
   max-height: 9rem;
   overflow-y: auto;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
+#bid-history:empty { display: none; }
 .bid-table {
   width: 100%;
-  border-collapse: collapse;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 3px 2px;
+  padding: 2px 3px 4px;
 }
 .bid-table thead th {
   color: var(--text-dim);
-  font-weight: 600;
-  font-size: 0.72rem;
-  padding: 4px 2px;
+  font-weight: 700;
+  font-size: 0.7rem;
+  padding: 6px 2px 5px;
   text-align: center;
   border-bottom: 1px solid rgba(255,255,255,0.08);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0;
 }
 .bid-table tbody td {
   text-align: center;
-  padding: 4px 2px;
-  font-size: 0.8rem;
-  font-weight: 500;
+  padding: 5px 2px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-radius: 7px;
 }
 .bt-pass { color: var(--text-dimmer); }
-.bt-bid.suit-clubs, .bt-bid.suit-spades { color: var(--black-suit); font-weight: 600; }
-.bt-bid.suit-diamonds, .bt-bid.suit-hearts { color: var(--red-suit); font-weight: 600; }
-.bt-bid.suit-notrump { color: var(--gold); font-weight: 600; }
+.bt-bid { background: rgba(255, 255, 255, 0.04); }
+.bt-bid.suit-clubs, .bt-bid.suit-spades { color: var(--black-suit); font-weight: 700; }
+.bt-bid.suit-diamonds, .bt-bid.suit-hearts { color: var(--red-suit); font-weight: 700; }
+.bt-bid.suit-notrump { color: var(--gold); font-weight: 700; }
 .bt-current {
-  background: rgba(108,92,231,0.2);
+  background: rgba(108,92,231,0.22);
   border: 1px solid var(--accent);
-  border-radius: 5px;
-  box-shadow: 0 0 8px var(--accent-glow);
+  border-radius: 7px;
+  box-shadow: 0 0 10px var(--accent-glow);
 }
 .bid-grid {
   display: grid;
@@ -589,94 +616,141 @@ body.has-spectators .screen {
   gap: 6px;
   margin-bottom: 1rem;
   padding: 0.75rem;
-  background: rgba(0,0,0,0.2);
-  border-radius: var(--radius);
-  border: 1px solid rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.24);
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.05);
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.25);
 }
 .bid-btn {
+  min-height: 38px;
   padding: 0.55rem 0.25rem;
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: var(--radius-sm);
-  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03));
   color: #fff;
-  font-size: clamp(0.7rem, 2.5vw, 0.85rem);
-  font-weight: 500;
+  font-size: clamp(0.72rem, 2.5vw, 0.9rem);
+  font-weight: 700;
   cursor: pointer;
-  transition: all var(--transition);
+  transition: transform var(--transition), background var(--transition), border-color var(--transition), box-shadow var(--transition);
   white-space: nowrap;
   font-family: var(--font);
+  touch-action: manipulation;
 }
 .bid-btn:hover:not(:disabled) {
-  background: rgba(255,255,255,0.12);
-  border-color: rgba(255,255,255,0.2);
-  transform: translateY(-1px);
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(162, 155, 254, 0.6);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(162, 155, 254, 0.25);
+  transform: translateY(-2px);
 }
-.bid-btn:disabled { opacity: 0.2; cursor: not-allowed; }
+.bid-btn:active:not(:disabled) { transform: translateY(0) scale(0.97); }
+.bid-btn:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+.bid-btn:disabled { opacity: 0.18; cursor: not-allowed; }
 .bid-btn.suit-clubs, .bid-btn.suit-spades { color: var(--black-suit); }
 .bid-btn.suit-diamonds, .bid-btn.suit-hearts { color: var(--red-suit); }
 .bid-btn.suit-notrump { color: var(--gold); }
-#btn-pass { width: 100%; margin-bottom: 1rem; }
+#btn-pass { width: 100%; margin-bottom: 1rem; min-height: 46px; }
 
 /* --- Partner --- */
 .partner-container {
   padding: 1.25rem; max-width: 560px; width: 100%; text-align: center;
-  background: var(--glass);
+  background: linear-gradient(180deg, rgba(30, 32, 52, 0.92), rgba(18, 19, 30, 0.94));
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
+  border-radius: 22px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(20px);
 }
-.partner-container h2 { color: var(--text); font-size: 1.3rem; margin-bottom: 0.5rem; }
-#partner-status { color: var(--text-dim); margin-bottom: 1rem; font-size: 0.9rem; }
+.partner-container h2 { color: var(--text); font-size: 1.3rem; font-weight: 800; margin-bottom: 0.5rem; }
+#partner-status { color: var(--text-dim); margin: 0.6rem 0 1rem; font-size: 0.9rem; font-weight: 500; }
 .partner-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
+  gap: 5px;
   margin-bottom: 1.25rem;
   padding: 0.75rem;
-  background: rgba(0,0,0,0.2);
-  border-radius: var(--radius);
-  border: 1px solid rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.24);
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.05);
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.25);
 }
+.partner-grid:empty { display: none; }
+/* Every card in the deck as a small face: pick the one your partner holds. */
 .partner-card-btn {
+  min-height: 36px;
   padding: 0.45rem;
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 6px;
-  background: rgba(255,255,255,0.04);
-  color: var(--black-suit);
-  font-size: clamp(0.7rem, 2.5vw, 0.85rem);
-  font-weight: 500;
+  border: 1px solid rgba(40, 30, 10, 0.25);
+  border-radius: 8px;
+  background: linear-gradient(162deg, #fffefa 0%, #f4efe2 100%);
+  color: #23262f;
+  font-size: clamp(0.74rem, 2.5vw, 0.9rem);
+  font-weight: 800;
   cursor: pointer;
-  transition: all var(--transition);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7), 0 2px 4px rgba(0, 0, 0, 0.3);
+  transition: transform var(--transition), box-shadow var(--transition);
   font-family: var(--font);
+  touch-action: manipulation;
 }
-.partner-card-btn:hover {
-  background: rgba(255,255,255,0.12);
-  border-color: rgba(255,255,255,0.2);
-  transform: translateY(-1px);
+.partner-card-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7), 0 8px 16px rgba(0, 0, 0, 0.35), 0 0 0 2px var(--accent-light);
 }
-.partner-card-btn.red { color: var(--red-suit); }
+.partner-card-btn:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+.partner-card-btn.red { color: #d63031; }
+.partner-card-btn:disabled { opacity: 0.25; cursor: not-allowed; filter: grayscale(0.6); }
 
 /* --- Play screen --- */
 .play-container { padding: 0.5rem; width: 100%; max-width: 600px; }
+
+/* The contract strip: bid and bidder, the called partner card, trumps, trick progress. */
 .game-info-bar {
-  display: flex; flex-wrap: wrap; gap: 0.6rem;
-  justify-content: center;
-  padding: 0.85rem 1.25rem; margin-bottom: 0.5rem;
-  background: rgba(255,255,255,0.07);
-  border: 1px solid rgba(255,255,255,0.14);
-  border-radius: var(--radius);
+  display: flex; flex-wrap: wrap; gap: 0.5rem;
+  justify-content: center; align-items: stretch;
+  padding: 0.6rem 0.75rem; margin-bottom: 0.5rem;
+  background: linear-gradient(180deg, rgba(34, 36, 58, 0.92), rgba(20, 21, 34, 0.94));
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 18px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   font-size: 0.95rem;
 }
-.game-info-bar span {
+.game-info-bar > span {
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  min-width: 78px;
   white-space: nowrap;
   padding: 0.3rem 0.75rem;
-  border-radius: 8px;
-  background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.09);
   font-weight: 600;
   color: #fff;
   letter-spacing: 0.01em;
+  line-height: 1.15;
 }
+.game-info-bar > span:empty { display: none; }
+.game-info-bar .gib-k {
+  font-size: 0.6rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim);
+}
+.game-info-bar .gib-v { font-style: normal; font-size: 1.05rem; font-weight: 800; color: #fff; }
+.game-info-bar .gib-v.suit-hearts, .game-info-bar .gib-v.suit-diamonds { color: var(--red-suit); }
+.game-info-bar .gib-v.suit-notrump { color: var(--gold); font-size: 0.9rem; }
+.game-info-bar .gib-who { font-style: normal; font-size: 0.68rem; font-weight: 600; color: var(--text-dim); max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
+.game-info-bar .gib-secret { font-style: italic; color: var(--text-dimmer); }
+.game-info-bar .gib-card {
+  font-style: normal; display: inline-block; margin: 1px 0; padding: 0 6px; border-radius: 5px;
+  font-size: 0.95rem; font-weight: 800; color: #23262f; background: #fbf8ef; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.game-info-bar .gib-card.red { color: #d63031; }
+.contract-progress {
+  flex: 1 1 100%; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 14px;
+  font-size: 0.72rem; color: var(--text-dim);
+}
+.contract-progress:empty { display: none; }
+.contract-progress .cp-row { display: inline-flex; align-items: center; gap: 7px; }
+.contract-progress b { font-weight: 700; color: rgba(255, 255, 255, 0.82); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contract-progress em { font-style: normal; font-weight: 800; font-family: var(--mono); color: var(--gold); }
+.contract-progress .cp-def em { color: var(--accent-light); }
+.contract-progress .cp-bar { position: relative; display: inline-block; width: 64px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.contract-progress .cp-bar i { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: linear-gradient(90deg, #f5c451, #ffd32a); transition: width 0.4s ease; }
+.contract-progress .cp-def .cp-bar i { background: linear-gradient(90deg, #6c5ce7, #a29bfe); }
+.contract-progress .cp-note { font-size: 0.66rem; color: var(--text-dimmer); }
 .practice-badge {
   background: rgba(167, 139, 250, 0.18) !important;
   border-color: rgba(167, 139, 250, 0.4) !important;
@@ -698,22 +772,36 @@ body.has-spectators .screen {
   letter-spacing: 0.04em;
 }
 
+/* Felt with a polished wood rim and a stitched inner line. */
 .table {
   position: relative;
   width: 100%;
   aspect-ratio: 4/3;
   max-height: 45vh;
-  background: radial-gradient(ellipse at center, #0f3520 0%, #091a10 100%);
-  border-radius: var(--radius-lg);
-  border: 2px solid rgba(255,255,255,0.06);
+  border: 7px solid transparent;
+  border-radius: 24px;
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(255, 255, 255, 0.06), transparent 58%) padding-box,
+    radial-gradient(ellipse at center, #17603f 0%, #0d3a26 62%, #082416 100%) padding-box,
+    linear-gradient(160deg, #6b4223 0%, #4a2c17 35%, #24150b 100%) border-box;
   margin-bottom: 0.5rem;
-  box-shadow: inset 0 0 60px rgba(0,0,0,0.3), 0 8px 32px rgba(0,0,0,0.4);
+  box-shadow: 0 0 0 1px rgba(245, 196, 81, 0.28), inset 0 0 60px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(0, 0, 0, 0.45), 0 14px 36px rgba(0,0,0,0.45);
   overflow: hidden;
-  transition: background 0.4s ease, border-color 0.4s ease;
+  transition: background 0.4s ease, box-shadow 0.4s ease;
 }
+.table::after {
+  content: '';
+  position: absolute; inset: 7px; z-index: 0; pointer-events: none;
+  border-radius: 14px;
+  border: 1.5px dashed rgba(245, 196, 81, 0.14);
+}
+body[data-table-view="25d"] .table::after { display: none; }
 .table.practice {
-  background: radial-gradient(ellipse at center, #1e0a3c 0%, #110520 100%);
-  border-color: rgba(167, 139, 250, 0.2);
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(255, 255, 255, 0.06), transparent 58%) padding-box,
+    radial-gradient(ellipse at center, #2d1457 0%, #1b0b38 62%, #10051f 100%) padding-box,
+    linear-gradient(160deg, #6b4223 0%, #4a2c17 35%, #24150b 100%) border-box;
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.35), inset 0 0 60px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(0, 0, 0, 0.45), 0 14px 36px rgba(0,0,0,0.45);
 }
 .table::before {
   content: '';
@@ -727,19 +815,19 @@ body.has-spectators .screen {
 }
 .table.active-seat-bottom::before {
   opacity: 1;
-  background: linear-gradient(to top, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.04) 45%, transparent 70%);
+  background: radial-gradient(ellipse at 50% 100%, rgba(162, 155, 254, 0.28) 0%, rgba(162, 155, 254, 0.08) 38%, transparent 62%);
 }
 .table.active-seat-top::before {
   opacity: 1;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.04) 45%, transparent 70%);
+  background: radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.05) 38%, transparent 62%);
 }
 .table.active-seat-left::before {
   opacity: 1;
-  background: linear-gradient(to right, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.04) 45%, transparent 70%);
+  background: radial-gradient(ellipse at 0% 50%, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.05) 38%, transparent 62%);
 }
 .table.active-seat-right::before {
   opacity: 1;
-  background: linear-gradient(to left, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.04) 45%, transparent 70%);
+  background: radial-gradient(ellipse at 100% 50%, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.05) 38%, transparent 62%);
 }
 
 .seat {
@@ -767,6 +855,7 @@ body.has-spectators .screen {
 }
 .seat-label.disconnected { opacity: 0.5; }
 .disconnect-countdown { font-size: 0.65em; color: #f87171; display: block; white-space: nowrap; }
+.seat-avatar { display: none; }
 .seat-name-row {
   display: flex; align-items: center; gap: 4px;
   max-width: 90px;
@@ -795,10 +884,58 @@ body.has-spectators .screen {
   color: var(--gold);
   line-height: 1;
 }
+/* Classic (and the fixture baseline, which has no view attribute): seat plates with an avatar,
+   name, star badges and a trick counter. 2.5D keeps its own raised plates from view.css. */
+body:not([data-table-view="25d"]) .seat-label {
+  display: grid; grid-template-columns: auto minmax(0, auto); grid-template-rows: auto auto; align-items: center;
+  column-gap: 7px; row-gap: 1px;
+  padding: 5px 11px 5px 5px; border-radius: 99px;
+  max-width: 132px;
+  color: rgba(255, 255, 255, 0.78);
+  background: linear-gradient(180deg, rgba(10, 18, 14, 0.82), rgba(4, 10, 7, 0.86));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);
+}
+body:not([data-table-view="25d"]) .seat-label:empty { display: none; }
+body:not([data-table-view="25d"]) .seat-avatar {
+  display: grid; place-items: center; grid-row: 1 / span 2;
+  width: 28px; height: 28px; border-radius: 50%;
+  font-size: 0.78rem; font-weight: 800; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  background: radial-gradient(circle at 34% 28%, color-mix(in srgb, var(--seat-hue) 75%, #fff), color-mix(in srgb, var(--seat-hue) 38%, #0b0d14) 72%);
+  border: 2px solid var(--seat-hue);
+}
+body:not([data-table-view="25d"]) .seat-name-row { max-width: 92px; font-size: 0.74rem; font-weight: 700; color: #fff; gap: 3px; }
+body:not([data-table-view="25d"]) .seat-name-row .status-dot { width: 6px; height: 6px; }
+body:not([data-table-view="25d"]) .seat-sets {
+  justify-self: start; display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.8rem; font-family: var(--mono);
+}
+body:not([data-table-view="25d"]) .seat-sets::before {
+  content: ''; width: 7px; height: 10px; border-radius: 2px;
+  background: linear-gradient(160deg, #fff, #d9d3c4); box-shadow: 2px -2px 0 rgba(255, 255, 255, 0.35);
+}
+body:not([data-table-view="25d"]) .bidder-star, body:not([data-table-view="25d"]) .partner-star { font-size: 0.85rem; margin-right: 1px; }
+body:not([data-table-view="25d"]) .disconnect-countdown { grid-column: 1 / -1; justify-self: center; }
+/* Phones: side seats stack avatar, name and tricks so they clear the trick cards. */
+@media (max-width: 600px) {
+  body:not([data-table-view="25d"]) :is(.seat-left, .seat-right) .seat-label {
+    grid-template-columns: auto; justify-items: center; row-gap: 2px;
+    padding: 5px 6px 6px; border-radius: 16px; max-width: 74px;
+  }
+  body:not([data-table-view="25d"]) :is(.seat-left, .seat-right) .seat-avatar { grid-row: auto; }
+  body:not([data-table-view="25d"]) :is(.seat-left, .seat-right) .seat-name-row { max-width: 64px; }
+  body:not([data-table-view="25d"]) :is(.seat-left, .seat-right) .seat-sets { justify-self: center; }
+}
+body:not([data-table-view="25d"]) .seat-label.active-turn {
+  color: #fff;
+  background: linear-gradient(180deg, rgba(76, 64, 170, 0.9), rgba(44, 36, 110, 0.92));
+  border-color: var(--accent-light);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 22px rgba(108,92,231,0.7), 0 8px 18px rgba(0, 0, 0, 0.4);
+}
 
 .seat-top    { top: 4%;   left: 50%; transform: translateX(-50%); }
-.seat-left   { top: 50%;  left: 4%;  transform: translateY(-50%); }
-.seat-right  { top: 50%;  right: 4%; transform: translateY(-50%); }
+.seat-left   { top: 50%;  left: 3%;  transform: translateY(-50%); }
+.seat-right  { top: 50%;  right: 3%; transform: translateY(-50%); }
 .seat-bottom { bottom: 4%; left: 50%; transform: translateX(-50%); flex-direction: column-reverse; }
 
 .seat-card { min-height: 30px; }
@@ -824,7 +961,17 @@ body.has-spectators .screen {
 .trick-card-left  { grid-area: left; }
 .trick-card-right { grid-area: right; }
 .trick-card-bot   { grid-area: bot; }
-.trick-card .card-mini { width: clamp(37px, 7.9vw, 55px); font-size: clamp(1.32rem, 4.75vw, 1.72rem); }
+.trick-card .card-mini {
+  width: clamp(37px, 7.9vw, 55px); font-size: clamp(1.32rem, 4.75vw, 1.72rem);
+  border-radius: 7px;
+  background: linear-gradient(162deg, #fffefa 0%, #f4efe2 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.75), 0 6px 14px rgba(0, 0, 0, 0.45);
+}
+/* Cards thrown in from each side land slightly askew (2.5D sets its own angles). */
+body:not([data-table-view="25d"]) .trick-card-left .card-mini { rotate: -6deg; }
+body:not([data-table-view="25d"]) .trick-card-right .card-mini { rotate: 6deg; }
+body:not([data-table-view="25d"]) .trick-card-top .card-mini { rotate: 2deg; }
+body:not([data-table-view="25d"]) .trick-card-bot .card-mini { rotate: -2deg; }
 
 .trick-area.trick-complete .trick-card {
   opacity: 0.4;
@@ -1309,20 +1456,22 @@ body.has-spectators .screen {
   position: absolute;
   bottom: 3%;
   right: 3%;
-  background: rgba(0,0,0,0.55);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px;
-  padding: 0.25rem 0.3rem;
+  background: linear-gradient(180deg, rgba(8, 16, 12, 0.78), rgba(2, 8, 5, 0.85));
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  padding: 0.3rem 0.35rem 0.35rem;
   z-index: 2;
   backdrop-filter: blur(4px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.4);
 }
 .ltp-label {
   font-size: 0.5rem;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-dimmer);
+  letter-spacing: 0.12em;
+  color: rgba(245, 196, 81, 0.75);
   text-align: center;
-  margin-bottom: 0.15rem;
+  margin-bottom: 0.2rem;
 }
 .ltp-grid {
   display: grid;
@@ -1344,7 +1493,7 @@ body.has-spectators .screen {
 .ltp-right { grid-area: right; }
 .ltp-bot   { grid-area: bot; }
 .ltp-winner .card-mini {
-  box-shadow: 0 0 0 2px var(--gold);
+  box-shadow: 0 0 0 2px var(--gold), 0 0 10px rgba(255, 211, 42, 0.5);
   border-radius: 4px;
 }
 .ltp-grid .card-mini {
@@ -1355,20 +1504,24 @@ body.has-spectators .screen {
 /* --- Connection toast --- */
 .connection-toast {
   position: fixed;
-  bottom: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(0,0,0,0.88);
-  color: #ccc;
-  padding: 0.5rem 1.2rem;
-  border-radius: 20px;
-  z-index: 600;
-  font-size: 0.8rem;
+  max-width: min(92vw, 440px);
+  background: rgba(14, 16, 26, 0.95);
+  color: #e6e8ef;
+  padding: 0.6rem 1.25rem;
+  border-radius: 99px;
+  z-index: 1100;
+  font-size: 0.84rem;
+  font-weight: 600;
+  text-align: center;
   pointer-events: none;
   animation: bannerIn 0.3s ease-out;
-  border: 1px solid rgba(255,255,255,0.1);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  border: 1px solid rgba(162, 155, 254, 0.3);
+  box-shadow: 0 10px 28px rgba(0,0,0,0.45);
 }
+.connection-toast.toast-error { border-color: rgba(255, 107, 120, 0.55); color: #ffd6da; }
 .connection-toast.fade-out {
   animation: bannerOut 0.4s ease-in forwards;
 }
@@ -1381,26 +1534,65 @@ body.has-spectators .screen {
   to { opacity: 0; transform: translateX(-50%) translateY(10px); }
 }
 
+/* --- Partner reveal (private: only the partner sees it) --- */
+.partner-reveal-banner {
+  position: fixed; top: calc(70px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); z-index: 1100;
+  display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center;
+  max-width: min(92vw, 380px); padding: 0.9rem 1.6rem 0.8rem; border-radius: 18px;
+  background: linear-gradient(180deg, rgba(40, 30, 6, 0.96), rgba(18, 14, 4, 0.96));
+  border: 1px solid rgba(255, 211, 42, 0.55);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 0 40px rgba(255, 211, 42, 0.2);
+  color: #fff3c4; font-size: 1rem; font-weight: 600;
+  animation: bannerIn 0.35s cubic-bezier(.2, .8, .3, 1.3);
+}
+.partner-reveal-banner .prb-star { font-size: 1.6rem; color: var(--gold); line-height: 1; text-shadow: 0 0 16px rgba(255, 211, 42, 0.8); }
+.partner-reveal-banner b { color: var(--gold); }
+.partner-reveal-banner small { font-size: 0.72rem; font-weight: 500; color: rgba(255, 243, 196, 0.7); }
+.partner-reveal-banner.fade-out { animation: bannerOut 0.4s ease-in forwards; }
+
+/* --- Abandon vote dialog --- */
+.bridge-modal-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(6px);
+}
+.bridge-modal {
+  width: 100%; max-width: 380px; padding: 1.6rem 1.4rem 1.3rem; text-align: center;
+  border-radius: 22px; color: var(--text);
+  background: linear-gradient(180deg, rgba(36, 30, 64, 0.98), rgba(18, 16, 32, 0.98));
+  border: 1px solid rgba(162, 155, 254, 0.35);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.6);
+  animation: modalIn 0.28s cubic-bezier(.2, .8, .3, 1);
+}
+@keyframes modalIn { from { opacity: 0; transform: translateY(16px) scale(0.96); } }
+.bridge-modal-icon { font-size: 2.2rem; margin-bottom: 6px; }
+.bridge-modal h3 { margin: 0 0 0.5rem; font-size: 1.25rem; font-weight: 800; color: #fff; }
+.bridge-modal p { margin: 0 0 0.5rem; color: rgba(255, 255, 255, 0.72); font-size: 0.9rem; line-height: 1.45; }
+.bridge-modal-timer { font-size: 0.8rem !important; color: var(--accent-light) !important; }
+.bridge-modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 1rem; }
+.bridge-modal-actions .btn { min-height: 46px; padding: 0.6rem 0.75rem; }
+.bridge-btn-danger { background: linear-gradient(180deg, #ff6b78, #c81e33) !important; box-shadow: 0 6px 18px rgba(255, 77, 94, 0.3) !important; }
+
 /* --- Trick won banner (centered on play table) --- */
 .trick-won-banner {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: rgba(0,0,0,0.88);
+  background: rgba(6, 12, 9, 0.9);
   color: var(--gold);
   padding: 0.5rem 1.5rem;
-  border-radius: 20px;
+  border-radius: 99px;
   z-index: 8;
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: 0.88rem;
+  font-weight: 700;
   pointer-events: none;
   text-align: center;
   max-width: min(92%, 280px);
   line-height: 1.25;
   animation: trickBannerIn 0.3s ease-out;
-  border: 1px solid rgba(255,211,42,0.2);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  border: 1px solid rgba(255,211,42,0.4);
+  box-shadow: 0 8px 22px rgba(0,0,0,0.45), 0 0 24px rgba(255, 211, 42, 0.18);
 }
 .trick-won-banner.fade-out {
   animation: trickBannerOut 0.4s ease-in forwards;
@@ -2191,4 +2383,200 @@ body.has-betting-widget { padding-bottom: 60px; }
 .rating-badge.rating-mistake  { background: #fb923c; color: #0b1120; }
 .rating-badge.rating-blunder  { background: #f87171; color: #0b1120; }
 
+/* ==========================================================================
+   Bridge app refresh. Page chrome and the screens around the table, scoped to
+   body.bridge-app so the hub, Regicide and Tai Di keep the shared components
+   as they are. (The play table itself is styled above with Bridge-only classes;
+   the Classic pixel baseline renders those with this same stylesheet.)
+   ========================================================================== */
+/* Pages that set their own backdrop (.hub-body, .rc-body, .td-body) override this. */
+body {
+  background:
+    radial-gradient(1000px 560px at 50% -12%, rgba(108, 92, 231, 0.18), transparent 70%),
+    radial-gradient(900px 600px at 50% 115%, rgba(23, 96, 63, 0.16), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+}
+body.bridge-app button { -webkit-tap-highlight-color: transparent; }
 
+/* Top bar and safe areas */
+/* Keep the bar's own colours: it overlays the top of the play screen, which the Classic pixel
+   baseline (tests/ui/table-view.pw.js) captures. Only add the notch inset. */
+body.bridge-app .top-bar {
+  height: calc(44px + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+}
+body.bridge-app .screen { padding-top: calc(48px + env(safe-area-inset-top, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body.bridge-app.has-spectators .screen { padding-top: calc(76px + env(safe-area-inset-top, 0px)); }
+body.bridge-app #screen-home { padding: calc(16px + env(safe-area-inset-top, 0px)) 12px calc(24px + env(safe-area-inset-bottom, 0px)); }
+
+/* Shared panels */
+body.bridge-app :is(.home-container, .lobby-container, .gameover-container) {
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(30, 32, 52, 0.92), rgba(18, 19, 30, 0.95));
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.bridge-eyebrow { margin: 0 0 2px; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent-light); }
+
+/* Home */
+body.bridge-app .bridge-home { max-width: 420px; padding: 1.4rem 1.5rem 1.5rem; position: relative; overflow: hidden; }
+body.bridge-app .bridge-home::before {
+  content: ''; position: absolute; inset: 0 0 auto; height: 230px; pointer-events: none;
+  background: radial-gradient(360px 200px at 50% 20%, rgba(23, 96, 63, 0.55), transparent 75%);
+}
+.bridge-home > * { position: relative; }
+.bh-toprow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.bh-toprow .fc-back-link { margin: 0; }
+.bh-toprow .view-picker-home { margin: 0; }
+.bh-hero { position: relative; height: 112px; width: 220px; margin: 4px auto 10px; }
+.bh-card {
+  --w: 62px;
+  position: absolute; left: 50%; bottom: 0; width: var(--w); height: calc(var(--w) * 1.4); margin-left: calc(var(--w) / -2);
+  border-radius: 8px; overflow: hidden; transform-origin: 50% 125%;
+  transform: translateX(calc(var(--i) * 36px)) rotate(calc(var(--i) * 11deg));
+  background: linear-gradient(162deg, #fffefa 0%, #f6f0e0 60%, #ebe1c6 100%);
+  border: 1px solid rgba(40, 30, 10, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.75), 0 10px 22px rgba(0, 0, 0, 0.5);
+  color: #23262f; font-weight: 800; line-height: 0.92;
+  animation: bhBob 4s ease-in-out infinite; animation-delay: calc(var(--i) * 0.25s + 0.6s);
+}
+@keyframes bhBob { 50% { translate: 0 -7px; } }
+.bh-card.red { color: #d63031; }
+.bh-card b { position: absolute; top: 6%; left: 9%; display: flex; flex-direction: column; align-items: center; font-size: 17px; }
+.bh-card b i { font-style: normal; font-size: 0.82em; margin-top: 1px; }
+.bh-card em { position: absolute; left: 55%; top: 58%; transform: translate(-50%, -50%); font-style: normal; font-size: 34px; }
+.bh-card.court em {
+  left: 27%; right: 15%; top: 20%; bottom: 15%; transform: none; display: grid; place-items: center;
+  font-family: Georgia, 'Times New Roman', serif; font-weight: 700; font-size: 26px;
+  border: 1px solid currentColor; border-radius: 4px;
+  background: linear-gradient(160deg, color-mix(in srgb, currentColor 10%, transparent), color-mix(in srgb, currentColor 22%, transparent));
+}
+body.bridge-app .bridge-home h1 {
+  font-size: 2.15rem; font-weight: 900; letter-spacing: -0.02em; margin-bottom: 0.3rem;
+  background: linear-gradient(180deg, #fff 30%, #c9c5ff 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+body.bridge-app .bh-tagline { margin-bottom: 0.9rem; color: rgba(255, 255, 255, 0.66); line-height: 1.45; }
+.bh-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; list-style: none; margin: 0 0 1.25rem; padding: 0; }
+.bh-chips li { padding: 4px 10px; border-radius: 99px; font-size: 0.72rem; font-weight: 600; color: rgba(255, 255, 255, 0.78); background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08); }
+body.bridge-app .bridge-home #leaderboard-section:not(:empty) { margin-bottom: 1rem; text-align: left; }
+body.bridge-app .bridge-home .btn { min-height: 48px; border-radius: 14px; font-weight: 700; }
+body.bridge-app .bridge-home #btn-create { font-size: 1rem; }
+body.bridge-app .bh-code-input { text-align: center; text-transform: uppercase; letter-spacing: 0.4em; text-indent: 0.4em; font-family: var(--mono); font-weight: 700; font-size: 1.15rem; }
+body.bridge-app .bh-code-input::placeholder { letter-spacing: 0.3em; }
+.dev-login-box { margin-top: 16px; padding: 12px; border: 1px dashed rgba(255, 255, 255, 0.2); border-radius: 14px; text-align: left; }
+.dev-login-note { font-size: 12px; color: #aaa; margin-bottom: 8px; }
+body.bridge-app #telegram-widget-container { display: flex; justify-content: center; }
+
+/* Role choice */
+body.bridge-app .bridge-role { max-width: 420px; }
+.bridge-role-icon { font-size: 1.4rem; letter-spacing: 0.25em; color: var(--accent-light); margin-bottom: 0.5rem; }
+body.bridge-app .role-card { justify-content: flex-start; gap: 14px; padding: 0.9rem 1rem; text-align: left; border-radius: 16px; min-height: 64px; }
+.role-ico { flex: none; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; font-size: 1.2rem; background: rgba(255, 255, 255, 0.14); }
+.role-text { display: flex; flex-direction: column; gap: 1px; }
+.role-text b { font-size: 1rem; }
+.role-text small { font-size: 0.76rem; font-weight: 500; opacity: 0.75; }
+
+/* Lobby */
+body.bridge-app .bridge-lobby { max-width: 460px; padding: 1.6rem 1.4rem 1.25rem; }
+body.bridge-app .bridge-lobby h2 { margin-bottom: 1rem; }
+body.bridge-app .bridge-lobby .room-code-display {
+  flex-direction: column; gap: 2px; padding: 1rem;
+  background: radial-gradient(240px 90px at 50% 0%, rgba(108, 92, 231, 0.18), transparent 80%), rgba(0, 0, 0, 0.32);
+  border: 1px dashed rgba(162, 155, 254, 0.35);
+}
+body.bridge-app .bridge-lobby .room-code-display .code { font-size: 2.4rem; text-shadow: 0 0 24px rgba(162, 155, 254, 0.35); }
+body.bridge-app .bridge-lobby .lobby-invite-row { flex-direction: row; flex-wrap: wrap; margin-bottom: 1.25rem; }
+body.bridge-app .bridge-lobby .lobby-invite-row .btn { flex: 1 1 160px; min-height: 46px; }
+body.bridge-app .bridge-lobby .player-list .player-item {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.025));
+  border-color: rgba(255, 255, 255, 0.08); border-radius: 14px;
+}
+body.bridge-app .bridge-lobby .player-item .seat-num {
+  width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; min-width: 0;
+  background: rgba(108, 92, 231, 0.18); border: 1px solid rgba(162, 155, 254, 0.35); color: var(--accent-light);
+}
+.lobby-open-seat {
+  display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; padding: 0.65rem 1rem;
+  border: 1px dashed rgba(255, 255, 255, 0.14); border-radius: 14px; color: var(--text-dim); text-align: left;
+}
+.open-seat-num { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font: 700 0.8rem var(--mono); border: 1px dashed rgba(255, 255, 255, 0.25); }
+.open-seat-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.open-seat-text b { font-size: 0.85rem; color: rgba(255, 255, 255, 0.6); }
+.open-seat-text small { font-size: 0.72rem; color: var(--text-dimmer); }
+.lobby-bots { margin: 0.25rem 0 0.75rem; }
+.lobby-bots:not(:has(button:not(.hidden))) { display: none; }
+.lobby-bots-label { margin-bottom: 0.4rem; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); }
+.lobby-bots-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.lobby-bots-row .btn { margin: 0; min-height: 40px; padding: 0.45rem 0.5rem; border-radius: 10px; white-space: normal; line-height: 1.2; }
+body.bridge-app .bridge-lobby #lobby-countdown { font-size: 1rem; font-weight: 700; color: #fff; }
+body.bridge-app .bridge-lobby :is(#lobby-start-btn, #lobby-join-as-player) { min-height: 48px; border-radius: 14px; font-weight: 700; }
+
+/* Bidding / partner hand labels */
+body.bridge-app .hand-display h3 { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; }
+
+/* Game over */
+body.bridge-app .gameover-container { position: relative; padding-top: 2.1rem; }
+body.bridge-app .gameover-container.outcome-win::before,
+body.bridge-app .gameover-container.outcome-loss::before {
+  content: '🏆'; display: grid; place-items: center; width: 74px; height: 74px; margin: -0.6rem auto 0.4rem; border-radius: 50%; font-size: 2.4rem;
+  background: radial-gradient(circle, rgba(255, 211, 42, 0.3), rgba(255, 211, 42, 0.04) 65%, transparent 70%);
+  animation: goBadge 0.7s cubic-bezier(.2, .9, .3, 1.35) both;
+}
+body.bridge-app .gameover-container.outcome-loss::before { content: '🃏'; background: radial-gradient(circle, rgba(239, 68, 68, 0.24), rgba(239, 68, 68, 0.03) 65%, transparent 70%); }
+@keyframes goBadge { from { opacity: 0; transform: scale(0.3) rotate(-18deg); } }
+body.bridge-app .gameover-container h2 { font-size: 2rem; font-weight: 900; letter-spacing: -0.02em; }
+body.bridge-app .score-item { border-radius: 12px; padding: 0.7rem 1rem; }
+body.bridge-app .gameover-actions .btn { min-height: 48px; border-radius: 14px; font-weight: 700; }
+
+/* Side screens sit at the top instead of floating mid-page. */
+body.bridge-app :is(#screen-history, #screen-replay, #screen-stats).active { align-items: flex-start; padding-top: calc(60px + env(safe-area-inset-top, 0px)); }
+body.bridge-app .stats-container { border-radius: 22px; }
+body.bridge-app .history-row { border-radius: 14px; transition: transform var(--transition), border-color var(--transition); }
+body.bridge-app .history-row:hover { transform: translateY(-1px); }
+
+/* Chat */
+.inline-chat-log { background: rgba(0, 0, 0, 0.16); border-radius: 12px; padding: 8px 10px; }
+.chat-msg .chat-name { color: #c9c5ff; }
+
+@media (max-width: 340px) {
+  .lobby-bots-row { grid-template-columns: 1fr; }
+}
+@media (max-width: 400px) {
+  body.bridge-app .bridge-home { padding: 1.2rem 1.1rem 1.3rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bh-card, #bid-status.is-my-turn, body.bridge-app .gameover-container::before { animation: none !important; }
+}
+
+/* Small tables (phones): the trick sizes itself from the felt (container units), the top and
+   bottom plates are a single row, so all four played cards clear the name plates. */
+body:not([data-table-view="25d"]) .table { container-type: size; }
+@media (max-width: 600px) and (min-height: 521px) {
+  body:not([data-table-view="25d"]) .trick-area { width: 50%; height: 62%; }
+  body:not([data-table-view="25d"]) .trick-card .card-mini { width: min(55px, 14.5cqh, 11cqw); font-size: min(1.72rem, 7cqh); }
+  body:not([data-table-view="25d"]) :is(.seat-top, .seat-bottom) .seat-label { grid-template-columns: auto auto auto; grid-template-rows: auto; padding: 3px 10px 3px 3px; column-gap: 6px; }
+  body:not([data-table-view="25d"]) :is(.seat-top, .seat-bottom) .seat-avatar { grid-row: auto; width: 22px; height: 22px; font-size: 0.66rem; }
+  body:not([data-table-view="25d"]) :is(.seat-left, .seat-right) .seat-label { max-width: 66px; }
+  body:not([data-table-view="25d"]) :is(.seat-left, .seat-right) .seat-name-row { max-width: 58px; }
+  /* Side plates drop the avatar and sit a little high so the last trick fits below them. */
+  body:not([data-table-view="25d"]) :is(.seat-left, .seat-right) { top: 40%; }
+  body:not([data-table-view="25d"]) :is(.seat-left, .seat-right) .seat-avatar { display: none; }
+  body:not([data-table-view="25d"]) .ltp-grid .card-mini { width: 18px; font-size: 0.66rem; }
+}
+
+/* Short landscape phones: one compact strip, smaller plates and cards, side seats lifted clear
+   of the last-trick panel. The table keeps its size (the hand tests rely on its geometry). */
+@media (max-height: 520px) and (orientation: landscape) {
+  .game-info-bar { padding: 0.35rem 0.5rem; gap: 0.35rem; border-radius: 14px; }
+  .game-info-bar > span { flex-direction: row; gap: 6px; min-width: 0; padding: 0.2rem 0.6rem; }
+  .game-info-bar .gib-v { font-size: 0.92rem; }
+  .contract-progress { flex: 0 1 auto; }
+  .contract-progress .cp-note { display: none; }
+  body:not([data-table-view="25d"]) .seat-avatar { display: none; }
+  body:not([data-table-view="25d"]) .seat-label { grid-template-columns: auto; padding: 3px 9px; row-gap: 0; }
+  body:not([data-table-view="25d"]) .last-trick-panel { right: 16%; }
+  body:not([data-table-view="25d"]) :is(.seat-top, .seat-bottom) { left: 7%; transform: none; }
+  body:not([data-table-view="25d"]) .trick-card .card-mini { width: min(55px, 22cqh); font-size: min(1.72rem, 10.5cqh); }
+  .trick-card .card-mini { width: min(55px, 9.5vh); font-size: min(1.72rem, 5vh); }
+  .ltp-grid .card-mini { width: min(30px, 6vh); font-size: min(1rem, 3vh); }
+}
