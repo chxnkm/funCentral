@@ -240,11 +240,20 @@ for (const mode of ['classic', '25d']) {
           const p = await corner(); await c.page.mouse.move(p.x, p.y);
           await c.page.locator('#play-hand').evaluate(el => Promise.all(el.getAnimations({ subtree: true }).map(a => a.finished.catch(() => {}))));
           const click = await corner();
-          await c.page.evaluate(() => { window.remainingCards = [...document.querySelectorAll('#play-hand .hand-card')].filter(card => card.classList.contains('is-selected') === false); });
+          // Hover can change as the pointer moves to the click position. Record
+          // every node and exclude the card actually played after the ack.
+          await c.page.evaluate(() => { window.handCardsBeforePlay = [...document.querySelectorAll('#play-hand .hand-card')]; });
           await c.page.mouse.click(click.x, click.y);
         }
         await expect.poll(() => c.page.evaluate(() => Object.values(gameState.hand).flat().length)).toBe(oldHand - 1);
-        if (!c.mobile) expect(await c.page.evaluate(() => remainingCards.every((card, i) => document.querySelectorAll('#play-hand .hand-card')[i] === card))).toBe(true);
+        if (!c.mobile) {
+          expect(await c.page.evaluate(() => {
+            const played = playFrames.at(-1).card;
+            const remaining = handCardsBeforePlay.filter(card => `${card.dataset.value} ${card.dataset.suit}` !== played);
+            const current = [...document.querySelectorAll('#play-hand .hand-card')];
+            return remaining.length === current.length && remaining.every((card, i) => current[i] === card);
+          })).toBe(true);
+        }
         plays.set(c, plays.get(c) + 1); moveCount++;
         if (move === 2) {
           await c.page.locator(`#top-bar [data-table-view="${mode === 'classic' ? '25d' : 'classic'}"]`).click();
