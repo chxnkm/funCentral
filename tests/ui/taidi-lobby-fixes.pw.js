@@ -129,25 +129,43 @@ test('mid-game spectator stays a spectator when the room returns to the lobby', 
   } finally { await close([host, other]); }
 });
 
-test('leaderboard: tied player cut off by the top-five limit still sees their own row', async ({ browser }) => {
-  // Seed ratings directly: Ann/Ben above, Cat/Dan/Eli/Fay tied at 1000, with
-  // Fay's games_played lowest so LIMIT 5 cuts her off despite sharing rank 3.
-  const names = [['Ann64', 1100, 10], ['Ben64', 1050, 10], ['Cat64', 1000, 10], ['Dan64', 1000, 9], ['Eli64', 1000, 8], ['Fay64', 1000, 1]];
-  const ids = {};
-  for (const [name] of names) {
-    const auth = await token(name);
-    ids[name] = auth.telegramId;
-  }
-  for (const [name, rating, games] of names) {
-    await worker.db.prepare('INSERT INTO taidi_ratings (telegram_id, rating, games_played, wins, updated_at) VALUES (?, ?, ?, 0, 0)').bind(ids[name], rating, games).run();
-  }
-  const fay = await client(browser, 'Fay64', { signedIn: true });
-  try {
-    // The hub leaderboard card (Tai Di tab) must show the top 5 plus a "You" row for Fay.
-    await fay.page.goto(worker.origin);
-    await fay.page.locator('.lb-tab[data-game="taidi"]').click();
-    await expect(fay.page.locator('.lb-row.lb-me')).toContainText('You');
-    await expect(fay.page.locator('.lb-row.lb-me')).toContainText('1000');
-    await shot(fay.page, 'taidi-leaderboard-tied-you-row.png');
-  } finally { await fay.context.close(); }
-});
+for (const sameName of [false, true]) {
+  test(`leaderboard: tied player cut off by the top-five limit still sees their own row${sameName ? ' with the same display name' : ''}`, async ({ browser }) => {
+    // Seed ratings directly: Ann/Ben above, Cat/Dan/Eli/Fay tied at 1000, with
+    // Fay's games_played lowest so LIMIT 5 cuts her off despite sharing rank 3.
+    const suffix = sameName ? 65 : 64;
+    const names = [[`Ann${suffix}`, 1100, 10], [`Ben${suffix}`, 1050, 10], [`Cat${suffix}`, 1000, 10], [`Dan${suffix}`, 1000, 9], [`Eli${suffix}`, 1000, 8], [`Fay${suffix}`, 1000, 1]];
+    await worker.db.prepare('DELETE FROM taidi_ratings').run();
+    const ids = {};
+    for (const [name] of names) {
+      const auth = await token(name);
+      ids[name] = auth.telegramId;
+    }
+    for (const [name, rating, games] of names) {
+      await worker.db.prepare('INSERT INTO taidi_ratings (telegram_id, rating, games_played, wins, updated_at) VALUES (?, ?, ?, 0, 0)').bind(ids[name], rating, games).run();
+    }
+    const fay = await client(browser, `Fay${suffix}`, { signedIn: true });
+    try {
+      if (sameName) {
+        // Distinct identities can have the same visible name, rank and rating.
+        await worker.db.prepare('UPDATE users SET display_name = ? WHERE telegram_id IN (?, ?)').bind('Same name', ids[`Cat${suffix}`], ids[`Fay${suffix}`]).run();
+      }
+      // The hub leaderboard card (Tai Di tab) must show the top 5 plus a "You" row for Fay.
+      await fay.page.goto(worker.origin);
+      await fay.page.locator('.lb-tab[data-game="taidi"]').click();
+      await expect(fay.page.locator('.lb-row.lb-me')).toContainText('You');
+      await expect(fay.page.locator('.lb-row.lb-me')).toContainText('1000');
+      await expect(fay.page.locator('.lb-row')).toHaveCount(6);
+      if (sameName) await expect(fay.page.locator('.lb-row:not(.lb-me) .lb-name')).toContainText(['Ann65', 'Ben65', 'Same name', 'Dan65', 'Eli65']);
+      await shot(fay.page, `taidi-leaderboard-tied-you-row${sameName ? '-same-name' : ''}.png`);
+      // The server suppresses the extra row when this identity is in the top five.
+      const ann = await client(browser, `Ann${suffix}`);
+      try {
+        await ann.page.goto(worker.origin);
+        await ann.page.locator('.lb-tab[data-game="taidi"]').click();
+        await expect(ann.page.locator('.lb-row')).toHaveCount(5);
+        await expect(ann.page.locator('.lb-row.lb-me')).toHaveCount(0);
+      } finally { await ann.context.close(); }
+    } finally { await fay.context.close(); }
+  });
+}

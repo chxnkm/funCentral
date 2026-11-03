@@ -34,10 +34,9 @@ window.FunLeaderboard = (() => {
       <span class="lb-stats">${esc(GAMES[game].stats(e))}</span>
     </div>`;
     let html = data.top.map((e) => row(e, false)).join('');
-    // Defence in depth for the Tai Di cutoff fix: never show "You" twice if the
-    // server ever returns a me row that is already in the top rows.
-    const alreadyInTop = data.me && data.top.some((e) => e.displayName === data.me.displayName && e.rank === data.me.rank && e.elo === data.me.elo);
-    if (data.me && !alreadyInTop) html += `<div class="lb-divider"></div>${row(data.me, true)}`;
+    // The server decides whether this identity is outside the top rows.
+    // Display names, ranks and ratings can all be shared by different players.
+    if (data.me) html += `<div class="lb-divider"></div>${row(data.me, true)}`;
     return html;
   }
 

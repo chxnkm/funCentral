@@ -64,5 +64,11 @@ describe('Tai Di lobby fixes (vocsong PR #80 review)', () => {
     expect(board.top.map((e) => e.displayName)).not.toContain('Fay');
     // Fay is tied at rank 3, but is not in the returned top 5 rows, so her own row must appear.
     expect(board.me).toEqual({ rank: 3, displayName: 'Fay', elo: 1000, wins: 0, gamesPlayed: 1 });
+    // Names are not identity: Cat and Fay can share every field used by the UI guard.
+    await worker.db.prepare('UPDATE users SET display_name = ? WHERE telegram_id IN (3, 6)').bind('Same name').run();
+    const sameName = await getTaiDiLeaderboard(worker.db as any, 6, 5);
+    expect(sameName.top[2]).toMatchObject({ displayName: 'Same name', rank: 3, elo: 1000 });
+    expect(sameName.me).toEqual({ rank: 3, displayName: 'Same name', elo: 1000, wins: 0, gamesPlayed: 1 });
+    expect((await getTaiDiLeaderboard(worker.db as any, 3, 5)).me).toBeNull();
   });
 });
