@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d14">
+  <meta name="description" content="funCentral — Floating Bridge, Regicide and Tai Di for your group. Play in the browser or from Telegram, with one sign-in and rated leaderboards.">
   <title>funCentral</title>
   <script src="/fc-host.js"></script>
   <script>
@@ -15,71 +17,147 @@
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
   <!-- Bridge's stylesheet is the funCentral design system. -->
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/hub.css">
 </head>
-<body>
+<body class="hub-body">
+  <header class="hub-top">
+    <a class="hub-brand" href="/" aria-label="funCentral home">
+      <span class="hub-mark" aria-hidden="true"><i>♠</i><i class="red">♥</i><i class="red">♦</i><i>♣</i></span>
+      <span class="hub-wordmark">funCentral</span>
+    </a>
+    <div id="hub-profile" class="hub-profile hidden" aria-live="polite">
+      <span id="hub-avatar" class="hub-avatar" aria-hidden="true"></span>
+      <span id="hub-greeting" class="hub-greeting"></span>
+    </div>
+  </header>
+
   <main class="hub">
-    <header class="hub-header">
-      <h1>♠♥ funCentral ♦♣</h1>
-      <p class="subtitle">Games for your group</p>
-      <p id="hub-greeting" class="hub-greeting hidden"></p>
-    </header>
+    <section class="hub-hero" aria-labelledby="hub-title">
+      <div class="hub-hero-copy">
+        <p class="hub-eyebrow">Card games for your group</p>
+        <h1 id="hub-title">Deal in your friends.</h1>
+        <p class="hub-lede">Three card games in the browser or straight from your Telegram group — one sign-in, invite links that drop friends into your table, and rated leaderboards.</p>
+        <div class="hub-cta">
+          <a class="btn btn-primary hub-cta-main" href="#games">Choose a game</a>
+          <a id="hub-telegram" class="btn btn-secondary hub-cta-tg hidden" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M21.9 4.3 18.7 19.5c-.2 1-.9 1.3-1.8.8l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9.1-8.2c.4-.4-.1-.6-.6-.2L6.2 13.2l-4.8-1.5c-1-.3-1.1-1 .2-1.5L20.5 3c.9-.3 1.6.2 1.4 1.3Z"/></svg>
+            Add to a Telegram group
+          </a>
+        </div>
+      </div>
+      <div class="hub-hero-art" aria-hidden="true">
+        <div class="hub-hero-glow"></div>
+        <div class="hub-fan" data-cards="AS KH QD JC 2S"></div>
+      </div>
+    </section>
 
-    <div id="leaderboard-section" class="hub-leaderboard"></div>
-
-    <section class="hub-grid" aria-label="Games">
-      <a class="game-tile" href="/bridge/">
-        <div class="tile-felt" aria-hidden="true">
-          <span class="tile-card black">A<i>♠</i></span><span class="tile-card red">K<i>♥</i></span><span class="tile-card red">Q<i>♦</i></span><span class="tile-card black">J<i>♣</i></span>
+    <section id="games" class="hub-games" aria-label="Games">
+      <a class="game-tile tile-bridge" href="/bridge/">
+        <div class="tile-art" aria-hidden="true">
+          <div class="tile-fan" data-cards="AS KH QD JC"></div>
+          <span class="tile-chip-corner">♠ ♥ ♦ ♣ 🚫</span>
         </div>
         <div class="tile-body">
           <h2>Floating Bridge</h2>
-          <p>The Singapore classic. Bid, call a secret partner, and win your tricks.</p>
-          <div class="tile-meta"><span>4 players</span><span>Competitive</span><span>Bots</span></div>
-          <span class="btn btn-primary tile-btn">Play Bridge</span>
+          <p>The Singapore classic. Bid for trumps, call a secret partner with one card, and race to your contract.</p>
+          <ul class="tile-meta"><li>👥 4 players</li><li>🤖 Bots to fill in</li><li>🏆 Elo rated</li></ul>
+          <span class="tile-btn">Play Bridge <b aria-hidden="true">→</b></span>
         </div>
       </a>
 
-      <a class="game-tile" href="/regicide/">
-        <div class="tile-felt" aria-hidden="true">
-          <span class="tile-card black">J<i>♣</i></span><span class="tile-card red">Q<i>♥</i></span><span class="tile-card black">K<i>♠</i></span>
+      <a class="game-tile tile-regicide" href="/regicide/">
+        <div class="tile-art" aria-hidden="true">
+          <div class="tile-castle"><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="tile-fan" data-cards="JC QH KS"></div>
         </div>
         <div class="tile-body">
           <h2>Regicide</h2>
-          <p>Team up to storm the castle and defeat all 12 corrupted royals.</p>
-          <div class="tile-meta"><span>1–4 players</span><span>Co-op</span><span>Solo mode</span></div>
-          <span class="btn btn-primary tile-btn">Play Regicide</span>
+          <p>Team up to storm the castle: defeat all twelve corrupted royals before your hands run dry.</p>
+          <ul class="tile-meta"><li>👥 1–4 players</li><li>🤝 Co-op</li><li>🧩 Solo mode</li></ul>
+          <span class="tile-btn">Play Regicide <b aria-hidden="true">→</b></span>
         </div>
       </a>
 
-      <a class="game-tile" href="/taidi/">
-        <div class="tile-felt" aria-hidden="true">
-          <span class="tile-card red">2<i>♦</i></span><span class="tile-card black">2<i>♣</i></span><span class="tile-card red">2<i>♥</i></span><span class="tile-card black">2<i>♠</i></span>
+      <a class="game-tile tile-taidi" href="/taidi/">
+        <div class="tile-art" aria-hidden="true">
+          <div class="tile-fan" data-cards="2D 2C 2H 2S"></div>
         </div>
         <div class="tile-body">
           <h2>Tai Di</h2>
-          <p>The classic climbing game: be the first to empty your hand. The 2 is the highest card.</p>
-          <div class="tile-meta"><span>2–4 players</span><span>Competitive</span><span>Rated</span></div>
-          <span class="btn btn-primary tile-btn">Play Tai Di</span>
+          <p>Big Two, the classic climbing game. Beat the table with singles, pairs and five-card hands; empty your hand first.</p>
+          <ul class="tile-meta"><li>👥 2–4 players</li><li>⚡ Fast rounds</li><li>🏆 Rated</li></ul>
+          <span class="tile-btn">Play Tai Di <b aria-hidden="true">→</b></span>
         </div>
       </a>
     </section>
+
+    <section class="hub-lower">
+      <div class="hub-how" aria-labelledby="hub-how-title">
+        <h2 id="hub-how-title">How it works</h2>
+        <ol>
+          <li><b>Pick a game</b><span>Create a table in a tap — no download, it runs in any browser.</span></li>
+          <li><b>Share the invite</b><span>Send the link or 4-letter room code; friends land straight in your lobby.</span></li>
+          <li><b>Play and climb</b><span>Sign in once with Telegram for every game. Each game keeps its own leaderboard.</span></li>
+        </ol>
+        <p id="hub-telegram-note" class="hub-tg-note hidden">In a Telegram group, type <code>/newgame</code> to start any of them and <code>/leaderboard</code> for the group board.</p>
+      </div>
+      <div id="leaderboard-section" class="hub-leaderboard"></div>
+    </section>
   </main>
 
+  <footer class="hub-foot">
+    <span>funCentral</span><span aria-hidden="true">·</span><span>Floating Bridge · Regicide · Tai Di</span>
+  </footer>
+
+  <script src="/fc-auth.js"></script>
   <script src="/leaderboard.js"></script>
   <script>
-    FunLeaderboard.mount(document.getElementById('leaderboard-section'));
-    try {
-      const name = localStorage.getItem('playerName');
-      if (name) {
-        const el = document.getElementById('hub-greeting');
-        el.textContent = `Welcome back, ${name}`;
-        el.classList.remove('hidden');
+    (() => {
+      const SUIT = { S: '♠', H: '♥', D: '♦', C: '♣' };
+      /** Decorative card faces for the hero and tiles: corner index, centre pip, framed court cards. */
+      function face(code) {
+        const rank = code.slice(0, -1);
+        const suit = code.slice(-1);
+        const card = document.createElement('span');
+        card.className = `hub-card ${suit === 'H' || suit === 'D' ? 'red' : 'black'}${'JQK'.includes(rank) ? ' court' : ''}`;
+        card.innerHTML = `<b>${rank}<i>${SUIT[suit]}</i></b><em>${'JQK'.includes(rank) ? rank : SUIT[suit]}</em>`;
+        return card;
       }
-    } catch { /* storage blocked */ }
+      for (const fan of document.querySelectorAll('[data-cards]')) {
+        const cards = fan.dataset.cards.split(' ');
+        cards.forEach((code, i) => {
+          const card = face(code);
+          card.style.setProperty('--i', String(i - (cards.length - 1) / 2));
+          fan.append(card);
+        });
+      }
+
+      const initial = (name) => ([...String(name).trim()][0] || '?').toUpperCase();
+      function greet(name) {
+        if (!name) return;
+        document.getElementById('hub-greeting').textContent = `Welcome back, ${name}`;
+        document.getElementById('hub-avatar').textContent = initial(name);
+        document.getElementById('hub-profile').classList.remove('hidden');
+      }
+      try { greet(localStorage.getItem('playerName')); } catch { /* storage blocked */ }
+      // A verified profile name wins over the locally saved one.
+      if (window.FunAuth?.token()) FunAuth.profile().then((p) => { if (p?.displayName) greet(p.displayName); }).catch(() => {});
+
+      // "Add to a Telegram group" only when the bot is configured for this deployment.
+      fetch('/api/config').then((r) => (r.ok ? r.json() : null)).then((cfg) => {
+        const bot = cfg?.botUsername;
+        if (!bot || !/^\w{3,64}$/.test(bot)) return;
+        const link = document.getElementById('hub-telegram');
+        link.href = `https://t.me/${bot}?startgroup=true`;
+        link.classList.remove('hidden');
+        document.getElementById('hub-telegram-note').classList.remove('hidden');
+      }).catch(() => {});
+
+      FunLeaderboard.mount(document.getElementById('leaderboard-section'));
+    })();
   </script>
 </body>
 </html>

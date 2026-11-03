@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0c0e16">
+  <meta name="description" content="Floating Bridge on funCentral — the Singapore classic. Bid, call a secret partner and win your tricks, with friends or bots.">
   <title>Floating Bridge · funCentral</title>
   <script src="/fc-host.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -12,7 +14,7 @@
   <link rel="stylesheet" href="/view.css">
   <script defer src="/view.js"></script>
 </head>
-<body>
+<body class="bridge-app">
 
   <!-- Top bar (visible when in a game) -->
   <div id="top-bar" class="top-bar hidden">
@@ -50,14 +52,25 @@
 
   <!-- Home screen -->
   <div id="screen-home" class="screen active">
-    <div class="home-container">
-      <a href="/" class="fc-back-link">← funCentral</a>
-      <div class="view-picker view-picker-home" role="group" aria-label="Table view">
-        <button type="button" data-table-view="classic" aria-pressed="true">Classic</button>
-        <button type="button" data-table-view="25d" aria-pressed="false">2.5D</button>
+    <div class="home-container bridge-home">
+      <div class="bh-toprow">
+        <a href="/" class="fc-back-link">← funCentral</a>
+        <div class="view-picker view-picker-home" role="group" aria-label="Table view">
+          <button type="button" data-table-view="classic" aria-pressed="true">Classic</button>
+          <button type="button" data-table-view="25d" aria-pressed="false">2.5D</button>
+        </div>
       </div>
-      <h1>♠♥ Floating Bridge ♦♣</h1>
-      <p class="subtitle">Singaporean Card Game</p>
+      <div class="bh-hero" aria-hidden="true">
+        <span class="bh-card black" style="--i:-1.5"><b>A<i>♠</i></b><em>♠</em></span>
+        <span class="bh-card red court" style="--i:-0.5"><b>K<i>♥</i></b><em>K</em></span>
+        <span class="bh-card red court" style="--i:0.5"><b>Q<i>♦</i></b><em>Q</em></span>
+        <span class="bh-card black court" style="--i:1.5"><b>J<i>♣</i></b><em>J</em></span>
+      </div>
+      <h1>Floating Bridge</h1>
+      <p class="subtitle bh-tagline">The Singapore classic — bid for trumps, call a secret partner, win your tricks</p>
+      <ul class="bh-chips" aria-label="At a glance">
+        <li>👥 4 players</li><li>🤝 Secret partner</li><li>🤖 Bots</li><li>🏆 Elo rated</li>
+      </ul>
 
       <div id="leaderboard-section"></div>
       <p id="identity-status" class="subtitle" role="status" aria-live="polite"></p>
@@ -66,8 +79,8 @@
       <!-- Telegram login section (shown when not logged in) -->
       <div id="login-section">
         <div id="telegram-widget-container"></div>
-        <div id="dev-login-section" class="hidden" style="margin-top:16px;padding:12px;border:1px dashed #888;border-radius:8px">
-          <div style="font-size:12px;color:#aaa;margin-bottom:8px">Localhost dev login (not available in production)</div>
+        <div id="dev-login-section" class="hidden dev-login-box">
+          <div class="dev-login-note">Localhost dev login (not available in production)</div>
           <div class="form-group">
             <label for="input-dev-name">Dev display name</label>
             <input type="text" id="input-dev-name" placeholder="e.g. Alice" maxlength="20" autocomplete="off">
@@ -90,7 +103,7 @@
 
         <div class="form-group">
           <label for="input-room">Room Code</label>
-          <input type="text" id="input-room" placeholder="e.g. AB12" maxlength="4" autocomplete="off" style="text-transform:uppercase">
+          <input type="text" id="input-room" class="bh-code-input" placeholder="AB12" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="go">
         </div>
 
         <button id="btn-join" class="btn btn-secondary">Join Game</button>
@@ -137,19 +150,21 @@
 
   <!-- Role choice screen (shown when joining via invite link) -->
   <div id="screen-role-choice" class="screen hidden">
-    <div class="home-container">
-      <h2>Join as Player or Spectator?</h2>
-      <p class="subtitle">Choose your role for this game</p>
+    <div class="home-container bridge-role">
+      <div class="bridge-role-icon" aria-hidden="true">♠♥♦♣</div>
+      <h2>Join as player or spectator?</h2>
+      <p class="subtitle">Choose your role for this table</p>
       <div class="role-choice-buttons">
-        <button id="btn-join-player" class="btn btn-primary">♠ Join as Player</button>
-        <button id="btn-join-spectator" class="btn btn-secondary">👁 Watch Game</button>
+        <button id="btn-join-player" class="btn btn-primary role-card"><span class="role-ico" aria-hidden="true">♠</span><span class="role-text"><b>Join as Player</b><small>Take a seat if one is free</small></span></button>
+        <button id="btn-join-spectator" class="btn btn-secondary role-card"><span class="role-ico" aria-hidden="true">👁</span><span class="role-text"><b>Watch Game</b><small>Follow one hand or the full board</small></span></button>
       </div>
     </div>
   </div>
 
   <!-- Lobby screen -->
   <div id="screen-lobby" class="screen hidden">
-    <div class="lobby-container">
+    <div class="lobby-container bridge-lobby">
+      <p class="bridge-eyebrow">Floating Bridge</p>
       <h2>Game Lobby</h2>
       <div class="room-code-display">
         <span class="label">Room Code</span>
@@ -161,10 +176,15 @@
       </div>
       <div id="lobby-players" class="player-list"></div>
       <p id="lobby-practice-notice" class="practice-notice hidden">🎮 Practice · unrated</p>
-      <button id="lobby-add-int-bot" class="btn btn-ghost btn-small hidden" onclick="send({type:'addBot',level:'intermediate'})">🤖 Add Intermediate Bot</button>
-      <button id="lobby-add-adv-bot" class="btn btn-ghost btn-small hidden" onclick="send({type:'addBot',level:'advanced'})">🧠 Add Advanced Bot</button>
-      <button id="lobby-add-soph-bot" class="btn btn-ghost btn-small hidden" onclick="send({type:'addBot',level:'sophisticated'})">🎓 Add Sophisticated Bot</button>
-      <button id="lobby-add-god-bot" class="btn btn-ghost btn-small hidden" onclick="send({type:'addBot',level:'god'})">⚡ Add God Bot</button>
+      <div class="lobby-bots">
+        <p class="lobby-bots-label">Fill a seat with a bot</p>
+        <div class="lobby-bots-row">
+          <button id="lobby-add-int-bot" class="btn btn-ghost btn-small hidden" onclick="send({type:'addBot',level:'intermediate'})">🤖 Add Intermediate Bot</button>
+          <button id="lobby-add-adv-bot" class="btn btn-ghost btn-small hidden" onclick="send({type:'addBot',level:'advanced'})">🧠 Add Advanced Bot</button>
+          <button id="lobby-add-soph-bot" class="btn btn-ghost btn-small hidden" onclick="send({type:'addBot',level:'sophisticated'})">🎓 Add Sophisticated Bot</button>
+          <button id="lobby-add-god-bot" class="btn btn-ghost btn-small hidden" onclick="send({type:'addBot',level:'god'})">⚡ Add God Bot</button>
+        </div>
+      </div>
       <p id="lobby-status" class="status-text">Waiting for players...</p>
       <p id="lobby-countdown" class="status-text hidden"></p>
       <button id="lobby-start-btn" class="btn btn-primary hidden" onclick="send({type:'startGame'})">Start Game</button>
