@@ -1,5 +1,5 @@
 // Real local Worker/SQLite Durable Object; no Cloudflare account or remote data.
-const { Miniflare } = require('miniflare');
+const { Miniflare, convertV4MiniflareOptions } = require('miniflare');
 const { build } = require('esbuild');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -15,16 +15,16 @@ exports.startWorker = async function startWorker(port = 4210, testBindings = {},
   const stateRoot = path.resolve(root, '.wrangler');
   await fs.mkdir(stateRoot, { recursive: true });
   const state = await fs.mkdtemp(path.join(stateRoot, 'chat-test-'));
-  const mf = new Miniflare({
+  const mf = new Miniflare(convertV4MiniflareOptions({
     host: '127.0.0.1', port, modules: true, script: outputFiles[0].text,
     compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'],
     durableObjects: { GAME_ROOM: { className: 'GameRoom', useSQLite: true }, REGICIDE_ROOM: { className: 'RegicideRoom', useSQLite: true }, TAIDI_ROOM: { className: 'TaiDiRoom', useSQLite: true } },
-    durableObjectsPersist: path.join(state, 'rooms'),
-    d1Databases: ['DB'], d1Persist: path.join(state, 'db'),
+    resourcePersistencePath: state,
+    d1Databases: ['DB'],
     bindings: { JWT_SECRET: 'local-chat-test-only', ALLOW_DEV_LOGIN: '1', TELEGRAM_BOT_USERNAME: 'local_test_only', ...testBindings },
     assets: { directory: path.join(root, 'static'), routerConfig: { has_user_worker: true, static_routing: { user_worker: ['/api/*'] } } },
     ...(outboundService ? { outboundService } : {}),
-  });
+  }));
   await mf.ready;
   const db = await mf.getD1Database('DB');
   for (const file of (await fs.readdir(path.join(root, 'migrations'))).filter(name => name.endsWith('.sql') && !skipMigrations.includes(name)).sort()) {
