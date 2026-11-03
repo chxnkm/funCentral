@@ -166,7 +166,7 @@ test('two players: opening card, tapping cards, play and pass by hand', async ({
 
     // Passing back to the leader clears the table, and a leader can't pass.
     await b.page.locator('#btn-pass').click();
-    await expect(a.page.locator('#table-caption')).toContainText('leads');
+    await expect(a.page.locator('#table-caption')).toContainText('You lead');
     await expect(a.page.locator('#btn-pass')).toBeDisabled();
     expect(await noSideScroll(a.page)).toBe(true);
 
