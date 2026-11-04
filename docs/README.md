@@ -1,4 +1,4 @@
-# Fun Central documentation
+# funCentral documentation
 
 ## Current guides
 
@@ -34,13 +34,16 @@ that the present revision passed a check**.
 | [Card drag](card-drag/README.md) | Drag interaction work and recorded validation |
 | [Chat/input](chat-input/README.md) | Chat/input review and before/after captures |
 | [UI polish](ui-polish/README.md) | Table-drag/lobby polish and recorded validation |
+| [Regicide UI](regicide-ui/README.md) | Regicide board/forecast/animation revamp with before/after captures and clips |
+| [Bridge and hub UI](bridge-ui/README.md) | Hub tiles/hero and Bridge table, contract strip, lobby, bidding and results refresh with before/after captures |
+| [Tai Di UI](taidi-ui/README.md) | Tai Di seated table, hand/hint/sort UX, responsive layouts and results revamp with before/after captures and clips |
 | [Dated design specs](superpowers/specs/) | Original feature designs, including single-game auth, leaderboards and group integration |
 | [Dated implementation plans](superpowers/plans/) | Historical task plans, not a current migration/release checklist |
 | [Feature notes](../features/) | Dated feature/change notes and their original context |
 
 Historical documents may refer to Bridge at `/`, former product names,
 old port numbers, a single-game Telegram command menu or manual deployment
-snippets. In the current app, `/` is the Fun Central hub, `/newgame` is an
+snippets. In the current app, `/` is the funCentral hub, `/newgame` is an
 inline game chooser, and releases use a PR merge to `master` and Workers
 Builds. Use the current guides above for commands and resource operations;
 never replay historical destructive database/reset instructions.

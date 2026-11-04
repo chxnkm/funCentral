@@ -13,6 +13,9 @@ describe('parseUpdate', () => {
     ['/newbridge', 'newbridge'],
     ['/newregicide', 'newregicide'],
     ['/newregicidegame', 'newregicide'],
+    ['/newtaidi', 'newtaidi'],
+    ['/newtaidigame', 'newtaidi'],
+    ['/NewTaiDi@funCentral_bot', 'newtaidi'],
     ['/leaderboard', 'leaderboard'],
     ['/help', 'help'],
     ['/start', 'help'],
@@ -24,6 +27,7 @@ describe('parseUpdate', () => {
 
   it('ignores private chats, plain text, unknown commands and prototype keys', () => {
     expect(parseUpdate(update('/newregicide', 'private'))).toBeNull();
+    expect(parseUpdate(update('/newtaidi', 'private'))).toBeNull();
     expect(parseUpdate(update('newregicide'))).toBeNull();
     expect(parseUpdate(update('/poker'))).toBeNull();
     expect(parseUpdate(update('/constructor'))).toBeNull();
@@ -80,7 +84,7 @@ describe('Telegram game selection', () => {
     await sendGameMenu('test-only', '-100123');
     const body = JSON.parse(fetch.mock.calls[0][1]?.body as string);
     expect(body.chat_id).toBe('-100123');
-    expect(body.text).toContain('Fun Central');
+    expect(body.text).toContain('funCentral');
     expect(body.reply_markup.inline_keyboard).toEqual(GAME_CATALOG.map((game) => [{
       text: `${game.emoji} ${game.name} (${game.players})`, callback_data: `newgame:${game.id}`,
     }]));

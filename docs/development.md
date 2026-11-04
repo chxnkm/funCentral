@@ -12,8 +12,22 @@ cd funCentral
 npm ci --include=dev
 ```
 
-Use a supported Node.js release compatible with the locked Wrangler and
-Playwright versions (the current Wrangler requires Node.js ≥20.3).
+Use Node.js 22.23.4+ (22.x), 24.22.1+ (24.x), or 26.12.1+;
+`.nvmrc` pins the verified 22.x release. Upgrade your system Node before
+installing dependencies or starting dev servers, and configure build/CI
+runtimes to use a patched release too. `package.json` declares these floors.
+
+These floors include the Node2Shell fix (CVE-2026-111497), an out-of-bounds
+write in the bundled Brotli decoder. Updating npm packages or obtaining a
+clean `npm audit` does **not** patch Node itself. See the
+[Node.js October 2026 security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases).
+Production runs on Cloudflare Workers/workerd, not this local Node binary;
+Cloudflare's managed runtime patch status must be verified separately.
+
+The scoped `gitnexus` → `glob` override selects glob 14.0.3+ and its patched
+minimatch 11.x dependency for GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249.
+Remove it when GitNexus's own dependency range includes patched versions,
+then reinstall and repeat the audit and tooling checks.
 All app tooling is in `devDependencies`: an environment that omits dev
 packages must explicitly include them. Use the lockfile, not a global
 Wrangler install, as the tooling source of truth.
@@ -36,7 +50,7 @@ examples or test commands. `.env.example` and `start_local.sh` belong to the
 archived Python implementation and are not Worker setup instructions.
 
 Telegram's Login Widget does not work on localhost. On `localhost` or
-`127.0.0.1`, the Bridge and Regicide login screens expose **Dev Login**.
+`127.0.0.1`, the Bridge, Regicide and Tai Di login screens expose **Dev Login**.
 With `ALLOW_DEV_LOGIN=1`, `/api/auth/dev` creates a local profile and signed
 token; the same display name maps to the same synthetic identity. Both
 games share the sign-in token and profile. Production must have
@@ -67,10 +81,12 @@ Open the localhost URL printed by Wrangler (normally port 8787):
 
 | URL | Purpose |
 | --- | --- |
-| `/` | Fun Central game hub and shared leaderboard |
+| `/` | funCentral game hub and shared leaderboard |
 | `/bridge/` | Bridge home, rooms, history/replay and statistics |
 | `/regicide/` | Regicide home and rooms |
 | `/regicide/?view=stats` | Regicide statistics |
+| `/taidi/` | Tai Di home and rooms |
+| `/taidi/?view=stats` | Tai Di statistics |
 
 Create a room after signing in and open another browser context to join as
 a different player. Separate contexts avoid sharing `localStorage` identity.

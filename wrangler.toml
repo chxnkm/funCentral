@@ -2,6 +2,14 @@ name = "sgbridgegame"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
+# Adding routes would otherwise turn workers.dev off; the Telegram webhook and
+# older links still use https://sgbridgegame.vocs.workers.dev.
+workers_dev = true
+
+# Public address (vocs.io zone in the same Cloudflare account).
+[[routes]]
+pattern = "funcentral.vocs.io"
+custom_domain = true
 
 [assets]
 directory = "./static"
@@ -14,6 +22,10 @@ class_name = "GameRoom"
 name = "REGICIDE_ROOM"
 class_name = "RegicideRoom"
 
+[[durable_objects.bindings]]
+name = "TAIDI_ROOM"
+class_name = "TaiDiRoom"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["GameRoom"]
@@ -21,6 +33,10 @@ new_sqlite_classes = ["GameRoom"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["RegicideRoom"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["TaiDiRoom"]
 
 [[d1_databases]]
 binding = "DB"

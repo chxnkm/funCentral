@@ -89,7 +89,7 @@ async function loadLeaderboard() {
 function renderLeaderboard(data) {
   const section = document.getElementById('leaderboard-section');
   if (!section) return;
-  // Shared Fun Central card with a Bridge | Regicide switch (static/leaderboard.js).
+  // Shared funCentral card with a Bridge | Regicide switch (static/leaderboard.js).
   if (window.FunLeaderboard) {
     window.FunLeaderboard.mount(section, { game: 'bridge', bridgeData: data, footer: '<button class="btn-link" onclick="showStats()">📊 Full stats →</button>' });
     return;
@@ -930,7 +930,7 @@ window.onTelegramAuth = async function (user) {
     resumeSavedRoom();
     loadLeaderboard();
   } catch {
-    alert('Telegram login failed. Please try again.');
+    notify('Telegram login failed. Please try again.');
   }
 };
 
@@ -1010,7 +1010,7 @@ async function devLogin() {
     resumeSavedRoom();
     loadLeaderboard();
   } catch (e) {
-    alert('Dev login failed — is the server running with ALLOW_DEV_LOGIN=1?');
+    notify('Dev login failed — is the server running with ALLOW_DEV_LOGIN=1?');
   }
 }
 
@@ -1159,6 +1159,7 @@ function getSuitClass(suit) {
 
 // --- WebSocket ---
 function connect() {
+  if (window.FC_MOVED) return; // this page is forwarding to funcentral.vocs.io (fc-host.js)
   if (!identityReady) return;
   if (identityNeedsLogin) { requestPlayerName(); return; }
   playerName = normalizePlayerName(playerName);
@@ -1361,7 +1362,7 @@ function handleMessage(msg) {
       pendingPlay = null;
       CardHand.cancelAll();
       renderState();
-      alert(msg.message);
+      notify(msg.message);
       break;
     case 'joined':
       break;
@@ -1399,7 +1400,7 @@ function handleMessage(msg) {
       lastGameOver = msg;
       break;
     case 'kicked':
-      alert(msg.reason || 'You were removed from the room.');
+      notify(msg.reason || 'You were removed from the room.');
       leaveGame();
       break;
     case 'playerKicked':
@@ -1451,32 +1452,44 @@ function handleMessage(msg) {
   }
 }
 
-function showConnectionToast(text) {
+/** A short message pill at the bottom of the screen. `kind` 'error' tints it red and keeps it longer. */
+function showConnectionToast(text, kind = '') {
+  document.querySelectorAll('.connection-toast').forEach((old, i, all) => { if (all.length - i > 2) old.remove(); });
   const div = document.createElement('div');
-  div.className = 'connection-toast';
+  div.className = `connection-toast${kind ? ` toast-${kind}` : ''}`;
+  div.setAttribute('role', kind === 'error' ? 'alert' : 'status');
   div.textContent = text;
   document.body.appendChild(div);
   setTimeout(() => {
     div.classList.add('fade-out');
     setTimeout(() => div.remove(), 400);
-  }, 3000);
+  }, kind === 'error' ? 4200 : 3000);
+}
+
+/** Non-blocking replacement for alert(): errors appear as a toast instead of a browser dialog. */
+function notify(text) {
+  showConnectionToast(text, 'error');
 }
 
 function showAbandonVotePrompt(timeoutSeconds) {
   // Create modal overlay
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  overlay.className = 'modal-overlay bridge-modal-overlay';
 
   const modal = document.createElement('div');
-  modal.style.cssText = 'background:rgba(20,10,40,0.95);border:1px solid rgba(139,92,246,0.5);border-radius:12px;padding:2rem;text-align:center;max-width:400px;color:#d4a843;';
+  modal.className = 'bridge-modal';
+  modal.setAttribute('role', 'alertdialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-labelledby', 'abandon-title');
 
   modal.innerHTML = `
-    <h3 style="margin:0 0 1rem 0;color:#d4a843;">Abandon Game?</h3>
-    <p style="margin:0 0 1.5rem 0;color:rgba(255,255,255,0.8);">Vote to end the current deal and return to lobby<br>(${timeoutSeconds}s timeout)</p>
-    <div style="display:flex;gap:1rem;justify-content:center;">
-      <button class="btn btn-primary" id="vote-yes" style="flex:1;">Yes, Abandon</button>
-      <button class="btn btn-secondary" id="vote-no" style="flex:1;">No, Continue</button>
+    <div class="bridge-modal-icon" aria-hidden="true">🏳️</div>
+    <h3 id="abandon-title">Abandon this deal?</h3>
+    <p>Vote to end the current deal and return everyone to the lobby.</p>
+    <p class="bridge-modal-timer">Vote closes in <b>${timeoutSeconds}s</b></p>
+    <div class="bridge-modal-actions">
+      <button class="btn btn-secondary" id="vote-no">No, keep playing</button>
+      <button class="btn btn-primary bridge-btn-danger" id="vote-yes">Yes, abandon</button>
     </div>
   `;
 
@@ -1501,6 +1514,7 @@ function showAbandonVotePrompt(timeoutSeconds) {
 
   yesBtn.addEventListener('click', () => respond(true));
   noBtn.addEventListener('click', () => respond(false));
+  requestAnimationFrame(() => noBtn.focus({ preventScroll: true }));
 
   // Auto-close after timeout + 2 seconds (server handles auto-accept)
   setTimeout(() => {
@@ -1524,10 +1538,14 @@ function animateTrickWon(msg) {
 
 function showPartnerNotification(bidderName) {
   const div = document.createElement('div');
-  div.style.cssText = 'position:fixed;top:20%;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#d4a843;padding:1rem 2rem;border-radius:8px;z-index:500;font-size:1.1rem;text-align:center;';
-  div.textContent = `You are ${bidderName}'s partner!`;
+  div.className = 'partner-reveal-banner';
+  div.setAttribute('role', 'status');
+  div.innerHTML = `<span class="prb-star" aria-hidden="true">★</span><span>You are <b>${esc(bidderName)}</b>'s secret partner</span><small>Keep it quiet until the called card is played</small>`;
   document.body.appendChild(div);
-  setTimeout(() => div.remove(), 4000);
+  setTimeout(() => {
+    div.classList.add('fade-out');
+    setTimeout(() => div.remove(), 400);
+  }, 4000);
 }
 
 function showTrickWonBanner(winnerName) {
@@ -1672,12 +1690,12 @@ async function submitBet(prediction) {
       myBetGameId = data.gameId || myBetGameId;
       renderBettingWidgetContent(gameState);
     } else {
-      alert(data.error || 'Could not place bet.');
+      notify(data.error || 'Could not place bet.');
       if (winBtn) winBtn.disabled = false;
       if (loseBtn) loseBtn.disabled = false;
     }
   } catch {
-    alert('Network error placing bet.');
+    notify('Network error placing bet.');
     if (winBtn) winBtn.disabled = false;
     if (loseBtn) loseBtn.disabled = false;
   }
@@ -1828,6 +1846,15 @@ function renderLobby(s) {
     list.appendChild(item);
   }
   const remaining = NUM_PLAYERS - s.players.length;
+  // Empty chairs stay visible so the table reads as four seats, not a list.
+  if (s.phase === 'lobby') {
+    for (let seat = s.players.length; seat < NUM_PLAYERS; seat++) {
+      const open = document.createElement('div');
+      open.className = 'lobby-open-seat';
+      open.innerHTML = `<span class="open-seat-num">${seat + 1}</span><span class="open-seat-text"><b>Open seat</b><small>${isHost ? 'Share the code or add a bot below' : 'Waiting for a player'}</small></span>`;
+      list.appendChild(open);
+    }
+  }
 
   const countdownEl = $('lobby-countdown');
   const startBtn = $('lobby-start-btn');
@@ -2127,6 +2154,8 @@ function renderBidding(s) {
 
   const isFullBoard = s.isSpectator && s.watchingSeat === -2;
   const isMyTurn = s.turn === s.mySeat;
+  document.querySelector('#screen-bidding .bidding-container')?.classList.toggle('my-turn', isMyTurn && !s.isSpectator);
+  $('bid-status').classList.toggle('is-my-turn', isMyTurn && !s.isSpectator);
 
   if (isFullBoard) {
     $('bid-status').textContent = '👁 Viewing all hands';
@@ -2322,18 +2351,70 @@ function renderPartner(s) {
 }
 
 // --- Play ---
+const SEAT_HUES = ['#a29bfe', '#5ec8f2', '#f5c451', '#6ee7a8'];
+const initialOf = (name) => ([...String(name || '?').trim()][0] || '?').toUpperCase();
+
+/**
+ * The contract strip above the table: the bid and bidder, the called partner card (and who it
+ * turned out to be), trumps, and how many tricks the bidder's side has against its target.
+ */
+function renderContractBar(s) {
+  const bidder = s.bidder >= 0 ? s.players[s.bidder] : null;
+  const bidEl = $('play-bid-info');
+  if (s.bid >= 0 && bidder) {
+    const bid = getBidFromNum(s.bid);
+    bidEl.innerHTML = `<b class="gib-k">Contract</b><em class="gib-v ${getSuitClass(BID_SUITS[s.bid % 5])}">${esc(bid)}</em><i class="gib-who">${esc(bidder.name)}</i>`;
+    bidEl.setAttribute('aria-label', `Contract ${bid} by ${bidder.name}`);
+  }
+  const partnerEl = $('play-partner-info');
+  if (s.partnerCard) {
+    const [value, suit] = s.partnerCard.split(' ');
+    const partner = s.partnerSeat >= 0 ? s.players[s.partnerSeat] : null;
+    partnerEl.innerHTML = `<b class="gib-k">Partner</b><em class="gib-card ${isRedSuit(suit) ? 'red' : 'black'}">${esc(value)}${esc(suit)}</em><i class="gib-who${partner ? '' : ' gib-secret'}">${partner ? esc(partner.name) : 'secret'}</i>`;
+    partnerEl.setAttribute('aria-label', `Partner card ${s.partnerCard}${partner ? `, ${partner.name}` : ', not revealed yet'}`);
+  } else {
+    partnerEl.innerHTML = '';
+  }
+  const trumpEl = $('play-trump-info');
+  if (s.trumpSuit) {
+    const noTrump = s.trumpSuit === '🚫';
+    trumpEl.innerHTML = `<b class="gib-k">Trump</b><em class="gib-v ${getSuitClass(s.trumpSuit)}">${noTrump ? 'No trump' : esc(s.trumpSuit)}</em>`;
+    trumpEl.setAttribute('aria-label', noTrump ? 'No trump' : `Trump ${s.trumpSuit}`);
+  } else {
+    trumpEl.innerHTML = '';
+  }
+
+  // Trick progress toward the contract. The partner's tricks only count once they are known.
+  const bar = document.querySelector('#screen-play .game-info-bar');
+  let progress = $('play-contract-progress');
+  if (!progress && bar) {
+    progress = document.createElement('div');
+    progress.id = 'play-contract-progress';
+    progress.className = 'contract-progress';
+    bar.appendChild(progress);
+  }
+  if (!progress) return;
+  if (!bidder || !s.setsNeeded) { progress.innerHTML = ''; progress.classList.add('hidden'); return; }
+  const sets = s.sets ?? [0, 0, 0, 0];
+  const known = s.partnerSeat >= 0;
+  const side = sets[s.bidder] + (known && s.partnerSeat !== s.bidder ? sets[s.partnerSeat] : 0);
+  const played = sets.reduce((a, b) => a + b, 0);
+  const against = 14 - s.setsNeeded;
+  const pct = (n, of) => `${Math.min(100, Math.round((n / of) * 100))}%`;
+  progress.classList.remove('hidden');
+  progress.innerHTML = known
+    ? `<span class="cp-row"><b>${esc(bidder.name)} &amp; ${esc(s.players[s.partnerSeat]?.name ?? '?')}</b><i class="cp-bar"><i style="width:${pct(side, s.setsNeeded)}"></i></i><em>${side}/${s.setsNeeded}</em></span>`
+      + `<span class="cp-row cp-def"><b>Defenders</b><i class="cp-bar"><i style="width:${pct(played - side, against)}"></i></i><em>${played - side}/${against}</em></span>`
+    : `<span class="cp-row"><b>${esc(bidder.name)}</b><i class="cp-bar"><i style="width:${pct(side, s.setsNeeded)}"></i></i><em>${side}/${s.setsNeeded}</em></span><span class="cp-note">+ the partner's tricks once the ${esc(s.partnerCard ?? 'called card')} is played</span>`;
+}
+
 function renderPlay(s) {
   renderSpectatorBar(s);
   renderSpectatorSwitcher(s, 'play-spectator-switcher');
 
   // Full board: show hand rows above the board, hide only the single bottom hand
   renderFullBoardInto(s, 'play-fullboard', ['play-hand-section']);
-  // Info bar
-  if (s.bid >= 0 && s.bidder >= 0) {
-    $('play-bid-info').textContent = `Bid: ${s.players[s.bidder].name} - ${getBidFromNum(s.bid)}`;
-  }
-  $('play-partner-info').textContent = s.partnerCard ? `Partner: ${s.partnerCard}` : '';
-  $('play-trump-info').textContent = s.trumpSuit ? `Trump: ${s.trumpSuit}` : '';
+  renderContractBar(s);
   const practiceBadge = $('play-practice-badge');
   if (practiceBadge) {
     if (s.isPractice) practiceBadge.classList.remove('hidden');
@@ -2382,7 +2463,8 @@ function renderPlay(s) {
       const countdownStr = (seat === s.turn && !player.connected && player.disconnectedAt)
         ? `<span class="disconnect-countdown">${disconnectCountdownText(player.disconnectedAt)}</span>`
         : '';
-      label.innerHTML = `<span class="seat-name-row">${bidderStar}${partnerStar}${statusDot(player.connected)}<span class="seat-name">${esc(player.name)}</span>${eyeIcons}</span><span class="seat-sets">${sets}</span>${countdownStr}`;
+      const avatar = `<span class="seat-avatar" style="--seat-hue:${SEAT_HUES[seat % SEAT_HUES.length]}" aria-hidden="true">${esc(initialOf(player.name))}</span>`;
+      label.innerHTML = `${avatar}<span class="seat-name-row">${bidderStar}${partnerStar}${statusDot(player.connected)}<span class="seat-name">${esc(player.name)}</span>${eyeIcons}</span><span class="seat-sets" title="Tricks won">${sets}</span>${countdownStr}`;
       label.className = 'seat-label';
       if (seat === s.turn) {
         label.classList.add('active-turn');
@@ -2967,7 +3049,7 @@ $('btn-create').addEventListener('click', async () => {
     $('lobby-room-code').textContent = roomCode;
     connect();
   } catch (err) {
-    alert('Failed to create game');
+    notify('Failed to create game');
   } finally {
     $('btn-create').disabled = false;
   }
@@ -2993,7 +3075,7 @@ $('btn-create-group').addEventListener('click', async () => {
     $('lobby-room-code').textContent = roomCode;
     connect();
   } catch (err) {
-    alert('Failed to create game');
+    notify('Failed to create game');
   } finally {
     btn.disabled = false;
   }
@@ -3006,7 +3088,7 @@ $('btn-join').addEventListener('click', async () => {
   if (!await preparePlayerName()) return;
 
   const code = $('input-room').value.trim().toUpperCase();
-  if (!code || code.length < 3) { alert('Please enter a valid room code'); return; }
+  if (!code || code.length < 3) { notify('Please enter a valid room code'); return; }
   setRoomCode(code);
 
   // If joining via invite link (and haven't chosen role yet), show role choice screen
@@ -3095,7 +3177,7 @@ function pingPlayer(seat) {
 
   if (cooldownRemaining > 0) {
     const secondsLeft = Math.ceil(cooldownRemaining / 1000);
-    alert(`Please wait ${secondsLeft}s before pinging this player again.`);
+    notify(`Please wait ${secondsLeft}s before pinging this player again.`);
     return;
   }
 

@@ -1,27 +1,28 @@
-# Fun Central
+# funCentral
 
 A multiplayer card-game hub built with Cloudflare Workers, Durable Objects,
 D1 and a vanilla JavaScript frontend.
 
-**Play:** <https://sgbridgegame.vocs.workers.dev> ·
+**Play:** <https://funcentral.vocs.io> ·
 **Repository:** <https://github.com/vocsong/funCentral> · Default branch: `master`
 
 ## Games
 
 | Game | URL | Play |
 | --- | --- | --- |
-| Floating Bridge | [/bridge/](https://sgbridgegame.vocs.workers.dev/bridge/) | Four-player Singaporean Bridge: bid, call a secret partner and win tricks. Includes bots, spectators, Classic/2.5D views, history and replay. |
-| Regicide | [/regicide/](https://sgbridgegame.vocs.workers.dev/regicide/) | Cooperative play for 1–4 players: use suit powers to defeat all 12 royals. Includes solo mode, spectators and separate ratings/stats. |
+| Floating Bridge | [/bridge/](https://funcentral.vocs.io/bridge/) | Four-player Singaporean Bridge: bid, call a secret partner and win tricks. Includes bots, spectators, Classic/2.5D views, history and replay. |
+| Regicide | [/regicide/](https://funcentral.vocs.io/regicide/) | Cooperative play for 1–4 players: use suit powers to defeat all 12 royals. Includes solo mode, spectators and separate ratings/stats. |
+| Tai Di | [/taidi/](https://funcentral.vocs.io/taidi/) | Big Two for 2–4 players: be first to empty your hand, with the 2 as the highest card. Includes spectators and a separate rating/stats. |
 
 Choose a game from the hub, sign in with Telegram, create a room and share its
-four-character code or invite link. Both games use the same account and saved
+four-character code or invite link. All games use the same account and saved
 sign-in, but their ratings and leaderboards stay separate. Old Bridge invites
 such as `/#ABCD` still redirect to `/bridge/#ABCD`.
 
 In Telegram groups, **[@funCentral_bot](https://t.me/funCentral_bot)** shows
-an inline **Bridge | Regicide** choice for `/newgame`; choosing a game creates
-a room in that same group. `/newbridge` and `/newregicide` remain typed
-shortcuts (`/newregicidegame` is also supported). The registered command menu
+an inline **Bridge | Regicide | Tai Di** choice for `/newgame`; choosing a game creates
+a room in that same group. `/newbridge`, `/newregicide` and `/newtaidi` remain typed
+shortcuts (`/newregicidegame` and `/newtaidigame` are also supported). The registered command menu
 contains `/newgame`, `/leaderboard` and `/help` (`/start` also shows help).
 Group boards count eligible group members.
 
@@ -55,8 +56,8 @@ npm run dev
 ```
 
 Open the localhost URL printed by Wrangler. The hub is `/`, Bridge is
-`/bridge/` and Regicide is `/regicide/`. The Telegram widget does not work on
-localhost; the documented dev-only login supports both games instead.
+`/bridge/`, Regicide is `/regicide/` and Tai Di is `/taidi/`. The Telegram widget does not work on
+localhost; the documented dev-only login supports every game instead.
 
 Before a PR, run `npm run test:pr` with an available Chromium browser. See
 [testing](docs/testing.md) for setup, coverage and reporting requirements.
@@ -70,6 +71,8 @@ Before a PR, run `npm run test:pr` with an available Chromium browser. See
   scripts and shared styles remain at the `static/` root.
 - Regicide lives in `src/regicide/` and `static/regicide/`, with namespaced
   `/api/regicide/*` routes and `regicide_*` database tables.
+- Tai Di lives in `src/taidi/` and `static/taidi/`, with namespaced
+  `/api/taidi/*` routes and `taidi_*` database tables.
 - Future games should follow `src/<game>/`, `static/<game>/` and
   `/api/<game>/*`, with their own room class and game-specific statistics.
   No broad reorganization of Bridge is required.
@@ -84,8 +87,9 @@ views, not unrestricted state; spectator views are explicit exceptions
 **Do not run `npm run deploy` manually.** Merge a reviewed PR to `master`;
 Cloudflare Workers Builds deploys the existing `sgbridgegame` service. The
 legacy service/database names are intentional: preserve existing resources,
-secrets, data and public URLs. Database migrations are a separate controlled
-step; see [deployment](docs/deployment.md).
+secrets, data and public URLs. The old `sgbridgegame.vocs.workers.dev`
+address stays enabled and forwards pages to `funcentral.vocs.io`. Database
+migrations are a separate controlled step; see [deployment](docs/deployment.md).
 
 The [documentation index](docs/README.md) links current guides and historical
 design/screenshot evidence. Root Python files and `.env.example` belong to

@@ -8,15 +8,23 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "test:ui": "playwright test",
-    "test:e2e": "playwright test tests/ui/chat-live.pw.js tests/ui/chat-hand.pw.js tests/ui/card-drag.pw.js tests/ui/ui-polish.pw.js tests/ui/identity-live.pw.js tests/ui/create-room.pw.js tests/ui/regicide-live.pw.js tests/ui/telegram-live.pw.js tests/ui/regicide-no-tables.pw.js",
+    "test:e2e": "playwright test tests/ui/chat-live.pw.js tests/ui/chat-hand.pw.js tests/ui/card-drag.pw.js tests/ui/ui-polish.pw.js tests/ui/bridge-ux.pw.js tests/ui/identity-live.pw.js tests/ui/create-room.pw.js tests/ui/regicide-live.pw.js tests/ui/telegram-live.pw.js tests/ui/regicide-no-tables.pw.js tests/ui/taidi-live.pw.js tests/ui/taidi-ux.pw.js tests/ui/taidi-no-tables.pw.js",
     "test:pr": "node tests/run-pr-checks.cjs"
   },
+  "engines": {
+    "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
+  },
+  "overrides": {
+    "gitnexus": {
+      "glob": "^14.0.3"
+    }
+  },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4",
+    "@cloudflare/workers-types": "^5.20261103.1",
     "@playwright/test": "^1.64.1",
-    "gitnexus": "^1.6.1",
+    "gitnexus": "^1.6.12",
     "typescript": "^5",
-    "vitest": "^3",
-    "wrangler": "^4"
+    "vitest": "^4.1.12",
+    "wrangler": "^4.157.0"
   }
 }

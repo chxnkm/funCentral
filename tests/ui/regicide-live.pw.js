@@ -22,8 +22,8 @@ async function patch(room, game) {
   expect(res.ok).toBe(true);
 }
 
-async function client(browser, name, { mobile = false, room = null, signedIn = true } = {}) {
-  const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 900 }, isMobile: mobile, hasTouch: mobile });
+async function client(browser, name, { mobile = false, room = null, signedIn = true, reducedMotion } = {}) {
+  const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 900 }, isMobile: mobile, hasTouch: mobile, reducedMotion });
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (err) => errors.push(err));
@@ -60,8 +60,14 @@ const view = (page) => page.evaluate(() => view);
 const seq = (page) => page.evaluate(() => view?.game?.log.at(-1)?.seq ?? 0);
 const noSideScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
 
+/** Waits until no card in the hand is still flying in or sliding to its fan position. */
+async function handSettled(page) {
+  await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'
+    || !a.effect?.target?.closest?.('#hand') || a.effect.getComputedTiming().endTime === Infinity));
+}
 /** Taps a fanned card on its exposed corner, like a finger would. */
 async function tapCard(page, code) {
+  await handSettled(page);
   const point = await page.evaluate((code) => {
     const card = document.querySelector(`#hand .hand-card[data-card="${code}"]`);
     const corner = card.querySelector('.card-corner').getBoundingClientRect();
@@ -92,19 +98,74 @@ test('hub and Bridge share the leaderboard entry point; old bridge links redirec
   } finally { await context.close(); }
 });
 
-test('signed-out visitors see the Telegram login and cannot take a seat', async ({ browser }) => {
+test('signed-out visitors watch the lobby as guests and sign in to take a seat', async ({ browser }) => {
   const room = await createRoom(3);
   const guest = await client(browser, 'Guest', { signedIn: false, room });
   try {
+    await expect(guest.page.locator('#screen-lobby')).toHaveClass(/active/);
+    await expect(guest.page.locator('#lobby-players .rc-player')).toHaveCount(0);
+    await expect(guest.page.locator('#lobby-wait')).toContainText('sign in');
+    await expect(guest.page.locator('#lobby-watchers')).toContainText('Guest');
+    await expect(guest.page.locator('#tb-name')).toHaveText('Guest');
+    // Sign in from the room: the login appears, and dev login (localhost only) returns and seats them.
+    await guest.page.locator('#btn-seat').click();
     await expect(guest.page.locator('#login-section')).toBeVisible();
     await expect(guest.page.locator('[data-dev-login]')).toBeVisible();
     await expect(guest.page.locator('#game-section')).toBeHidden();
-    // Dev login (localhost only) signs in and joins the pending invite.
     await guest.page.locator('#input-dev-name').fill('Late Guest');
     await guest.page.locator('[data-dev-login] button').click();
     await expect(guest.page.locator('#screen-lobby')).toHaveClass(/active/);
     await expect(guest.page.locator('#lobby-players .rc-player')).toHaveCount(1);
+    await expect(guest.page.locator('#btn-seat')).toBeHidden();
+    await expect(guest.page.locator('#lobby-watchers')).toBeHidden();
   } finally { await close([guest]); }
+});
+
+test('spectators: invite links open a running game to watch; the table sees who is watching', async ({ browser }) => {
+  const { pages } = await table(browser, 2, { seed: 31 });
+  const [host, other] = pages;
+  const room = (await view(host.page)).roomCode;
+  const guest = await client(browser, 'Anon', { signedIn: false, room, mobile: true });
+  const fan = await client(browser, 'Fan31', { room });
+  try {
+    // A signed-out visitor watches the live board, with no hand and a way to sign in.
+    await expect(guest.page.locator('#screen-game')).toHaveClass(/active/);
+    await expect(guest.page.locator('#hand')).toContainText('watching');
+    await expect(guest.page.locator('#turn-banner')).toContainText('Watching');
+    await expect(guest.page.locator('#party .rc-plate')).toHaveCount(2);
+    await expect(guest.page.locator('#btn-act')).toHaveText('Sign in to Play');
+    await expect(guest.page.locator('#btn-act')).toBeEnabled();
+    expect(await noSideScroll(guest.page)).toBe(true);
+    // A signed-in visitor watches too and is not seated.
+    await expect(fan.page.locator('#screen-game')).toHaveClass(/active/);
+    await expect(fan.page.locator('#btn-act')).toBeDisabled();
+    expect((await view(fan.page)).you.seat).toBe(-1);
+    // Players see both watchers.
+    for (const p of [host, other]) {
+      await expect(p.page.locator('#tb-watchers')).toBeVisible();
+      await expect(p.page.locator('#tb-watchers')).toHaveText('2');
+      await expect(p.page.locator('#tb-watchers')).toHaveAttribute('title', /Guest.*Fan31|Fan31.*Guest/);
+    }
+    // A watcher leaving updates the count.
+    await guest.page.locator('#btn-leave').click();
+    await expect(guest.page.locator('#screen-home')).toHaveClass(/active/);
+    await expect(host.page.locator('#tb-watchers')).toHaveText('1');
+
+    // Back in the lobby the watcher is not auto-seated (the host's party stays as it was) until they ask.
+    await host.page.locator('#btn-end').click();
+    await host.page.locator('#confirm-ok').click();
+    for (const p of [host, other, fan]) await expect(p.page.locator('#screen-lobby')).toHaveClass(/active/);
+    await fan.page.waitForTimeout(800);
+    expect((await view(fan.page)).you.seat).toBe(-1);
+    await expect(host.page.locator('#lobby-players .rc-player')).toHaveCount(2);
+    await expect(host.page.locator('#lobby-watchers')).toContainText('Fan31');
+    await expect(fan.page.locator('#lobby-wait')).toContainText("You're watching");
+    await fan.page.locator('#btn-seat').click();
+    await expect(host.page.locator('#lobby-players .rc-player')).toHaveCount(3);
+    await expect.poll(async () => (await view(fan.page)).you.seat).toBe(2);
+    await expect(host.page.locator('#tb-watchers')).toBeHidden();
+    await expect(fan.page.locator('#btn-seat')).toBeHidden();
+  } finally { await close([...pages, guest, fan]); }
 });
 
 test('solo: companion pair resolves both suits; yield is not offered', async ({ browser }) => {
@@ -115,9 +176,11 @@ test('solo: companion pair resolves both suits; yield is not offered', async ({ 
     await expect(page.locator('#hand .hand-card')).toHaveCount(6);
     await expect(page.locator('#btn-yield')).toBeHidden();
     await select(page, ['8D', 'AC']);
-    // Rulebook example: 8♦ + A♣ = 9 → draw 9, deal 18.
-    await expect(page.locator('#preview')).toContainText('18 dmg (♣×2)');
-    await expect(page.locator('#preview')).toContainText('♦ draw 9');
+    // Rulebook example: 8♦ + A♣ = 9 → draw 9, deal 18. Only 4 fit under the 8-card limit, and the preview says so.
+    await expect(page.locator('#preview .rc-chip-dmg')).toHaveText('18 dmg');
+    await expect(page.locator('#preview .rc-power.suit-C')).toHaveText('♣ ×2');
+    await expect(page.locator('#preview .rc-power.suit-D')).toHaveText('♦ Draw 4 of 9');
+    await expect(page.locator('#preview .rc-outcome')).toContainText('then take');
     await page.locator('#btn-act').click();
     await expect.poll(async () => (await view(page)).game.enemyDamage).toBe(18);
     // Drew up to the 8-card limit: 4 left + 4 drawn.
@@ -149,7 +212,10 @@ test('solo: no flips left and a hand that cannot cover the hit is a defeat', asy
   const { page } = pages[0];
   try {
     await patch(room, { enemy: 'QC', enemyDamage: 0, played: [], hands: [['2S', '3H']], soloJestersLeft: 0 });
+    await expect(page.locator('#survival')).toContainText('short by 10');
     await select(page, ['2S']);
+    // The forecast warns before the fatal move.
+    await expect(page.locator('#preview .rc-outcome.fatal')).toContainText("you'd lose");
     await page.locator('#btn-act').click();
     await expect(page.locator('#modal-over')).toBeVisible();
     await expect(page.locator('#over-title')).toContainText('Defeat');
@@ -163,7 +229,7 @@ test('solo: exact kill joins the tavern; beating the last King is a rated Gold v
   try {
     await patch(room, { enemy: 'JC', enemyDamage: 14, played: [], hands: [['6H', '10S', '9S']] });
     await select(page, ['6H']);
-    await expect(page.locator('#preview')).toContainText('exact kill');
+    await expect(page.locator('#preview .rc-outcome.kill')).toContainText('Exact kill');
     const tavernBefore = (await view(page)).game.tavernCount;
     await page.locator('#btn-act').click();
     await expect(page.locator('#info-castle')).toHaveText(/1\/12/);
@@ -200,14 +266,24 @@ test('2 players: after one yields the other cannot; hearts are blocked by a Hear
     await expect.poll(async () => (await view(b)).game.currentSeat).toBe(1);
     await expect(b.locator('#btn-yield')).toBeDisabled();
     await expect(b.locator('#btn-yield')).toHaveAttribute('title', /yielded on their last turn/);
+    // The view says who yielded, so the block is explained by name and shown on their plate.
+    await expect(b.locator('#action-note')).toHaveText("Can't yield — Ada1 yielded on their last turn");
+    await expect(b.locator('.rc-plate[data-seat="0"] .rc-plate-status')).toHaveText('Yielded');
     await select(b, ['4H']);
-    await expect(b.locator('#preview')).toContainText('♥ immune');
+    await expect(b.locator('#preview .rc-power.suit-H')).toHaveText('♥ Immune');
     await b.locator('#btn-act').click();
     await expect.poll(async () => (await view(a)).game.log.at(-2)?.t).toBe('play');
     await expect(a.locator('#last-action')).toContainText('♥ blocked');
     expect((await view(a)).game.discardCount).toBeGreaterThanOrEqual(2); // nothing healed
-    // Both pages agree on whose turn it is, shown as Bridge's glowing seat label.
-    for (const p of [a, b]) await expect(p.locator('.seat-label.active-turn')).toHaveCount(1);
+    // Both pages agree on whose turn it is, shown as the glowing party plate.
+    for (const p of [a, b]) await expect(p.locator('.rc-plate.is-turn')).toHaveCount(1);
+    // Leaving mid-game asks first, in the game's own dialog; cancelling keeps the seat.
+    await a.locator('#btn-leave').click();
+    await expect(a.locator('#modal-confirm')).toBeVisible();
+    await expect(a.locator('#confirm-title')).toHaveText('Leave this game?');
+    await a.locator('#confirm-cancel').click();
+    await expect(a.locator('#modal-confirm')).toBeHidden();
+    await expect(a.locator('#screen-game')).toHaveClass(/active/);
   } finally { await close(pages); }
 });
 
@@ -218,14 +294,15 @@ test('3 players: Jester cancels immunity, retro-activates spades, and its player
     await patch(room, { enemy: 'JS', enemyDamage: 6, jesterActive: false, currentSeat: 1,
       played: [{ seat: 0, cards: ['6S'], value: 6, damage: 6 }],
       hands: [['KH'], ['X1', '9C', '2D'], ['QH', '3D']] });
-    await expect(a.locator('#info-shield')).toHaveText(/🛡️ 0/); // immune: the earlier spade does nothing yet
+    await expect(a.locator('#info-shield')).toHaveText('0'); // immune: the earlier spade does nothing yet
     await select(b, ['X1']);
     await expect(b.locator('#preview')).toContainText('Cancels immunity');
     await b.locator('#btn-act').click();
     await expect(b.locator('#modal-jester')).toBeVisible();
     await expect(a.locator('#modal-jester')).toBeHidden();
     await expect(a.locator('#turn-banner')).toContainText('choosing who goes next');
-    await expect(a.locator('#info-shield')).toHaveText(/🛡️ 6/); // the earlier spade now shields
+    await expect(a.locator('#info-shield')).toHaveText('6'); // the earlier spade now shields
+    await expect(a.locator('#info-attack')).toHaveText('410'); // attack 4 after the shield, then the struck-through 10
     await expect(a.locator('#info-immune')).toHaveText(/No immunity/);
     await b.locator('#jester-choices .player-item').nth(2).click();
     await expect.poll(async () => (await view(c)).game.currentSeat).toBe(2);
@@ -250,7 +327,7 @@ test('4 players: diamonds draw round-robin skipping full hands; combo rules enfo
     await tapCard(a, '6S');
     await select(a, ['2C', '2D', '2H']);
     await expect(a.locator('#btn-act')).toHaveText('Play 2♣ 2♦ 2♥');
-    await expect(a.locator('#preview')).toContainText('6 dmg · ♥ nothing to heal · ♦ draw 6 · ♣ immune'); // JC is immune to clubs
+    await expect(a.locator('#preview .rc-chips')).toHaveText(/6 dmg.*♥ Nothing to heal.*♦ Draw 6.*♣ Immune/); // JC is immune to clubs
     for (const c of ['2C', '2D', '2H']) await tapCard(a, c);
     await select(a, ['6D']);
     await expect(a.locator('#btn-act')).toHaveText('Play 6♦');
@@ -260,7 +337,7 @@ test('4 players: diamonds draw round-robin skipping full hands; combo rules enfo
     // 6 draws from the player clockwise, skipping full (5-card) hands:
     // A 4→5, B full, C 1→2, D 3→4, C 2→3, D 4→5, C 3→4.
     expect((await view(c)).game.handCounts).toEqual([5, 5, 4, 5]);
-    await expect(d.locator('#seat-bottom .seat-sets')).toHaveText('🂠 5');
+    await expect(d.locator('.rc-plate.is-you .rc-plate-count')).toHaveText('5');
     await expect(c.locator('#hand .hand-card')).toHaveCount(4);
   } finally { await close(pages); }
 });
@@ -278,6 +355,52 @@ test('spectators watch without a hand; a reload keeps your seat', async ({ brows
     expect((await view(pages[1].page)).game.hand).toEqual(handBefore);
     expect((await view(pages[1].page)).you.seat).toBe(1);
   } finally { await close([...pages, late]); }
+});
+
+test('lobby: a kicked player stays out after a reload; a new invite link switches rooms', async ({ browser }) => {
+  const room = await createRoom(23);
+  const host = await client(browser, 'Host23', { room });
+  await expect(host.page.locator('#lobby-players .rc-player')).toHaveCount(1);
+  const guest = await client(browser, 'Guest23', { room, mobile: true });
+  try {
+    await expect(host.page.locator('#lobby-players .rc-player')).toHaveCount(2);
+    // A reload reconnects the seated guest; being kicked afterwards must not auto-join them again.
+    await guest.page.reload();
+    await expect.poll(async () => (await view(guest.page))?.you.seat).toBe(1);
+    await host.page.locator('#lobby-players .kick-btn').click();
+    await expect(host.page.locator('#lobby-players .rc-player')).toHaveCount(1);
+    await guest.page.waitForTimeout(800);
+    expect((await view(guest.page)).you.seat).toBe(-1);
+    await expect(host.page.locator('#lobby-players .rc-player')).toHaveCount(1);
+    // Opening another room's invite in the same tab leaves the first and takes a seat in the second.
+    const other = await createRoom(24);
+    await guest.page.evaluate((code) => { location.hash = code; }, other);
+    await expect.poll(async () => (await view(guest.page))?.roomCode).toBe(other);
+    await expect.poll(async () => (await view(guest.page)).you.seat).toBe(0);
+    await expect(guest.page.locator('#lobby-code')).toHaveText(other);
+  } finally { await close([host, guest]); }
+});
+
+test('desktop keyboard plays; reduced motion skips the animation layer', async ({ browser }) => {
+  const room = await createRoom(21);
+  const solo = await client(browser, 'Keys21', { room, reducedMotion: 'reduce' });
+  const { page } = solo;
+  try {
+    await page.locator('#btn-start').click();
+    await expect(page.locator('#screen-game')).toHaveClass(/active/);
+    await patch(room, { enemy: 'JD', enemyDamage: 0, played: [], hands: [['3C', '5H', '9S']] });
+    await expect(page.locator('#hand .hand-card')).toHaveCount(3);
+    // Keys follow the fanned order: 1 = 3♣, 3 = 9♠. Escape clears.
+    await page.keyboard.press('3');
+    expect(await page.evaluate(() => [...selected])).toEqual(['9S']);
+    await expect(page.locator('#preview .rc-power.suit-S')).toHaveText('♠ Shield +9');
+    await page.keyboard.press('Escape');
+    expect(await page.evaluate(() => selected.size)).toBe(0);
+    await page.keyboard.press('1');
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await view(page)).game.enemyDamage).toBe(6); // 3♣ doubled
+    await expect(page.locator('#fx')).toBeEmpty();
+  } finally { await close([solo]); }
 });
 
 test('Regicide stats: ranking with Bridge-style min-games filter and sorting; linked from the leaderboard card', async ({ browser }) => {
@@ -356,7 +479,7 @@ async function playFullGame(browser, n, seed) {
       const mine = (await view(actor)).game;
       // Invariants on every page before acting.
       for (const [i, p] of pages.entries()) {
-        await expect(p.page.locator('.seat-label.active-turn')).toHaveCount(1);
+        await expect(p.page.locator('.rc-plate.is-turn')).toHaveCount(1);
         await expect(p.page.locator('#hand .hand-card')).toHaveCount((await view(p.page)).game.hand.length);
         if (i !== g.currentSeat) await expect(p.page.locator('#btn-act')).toBeDisabled();
       }

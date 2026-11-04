@@ -8,16 +8,22 @@
   **Never run `npm run deploy` manually.** Its script exists, but it is not
   the release or validation workflow.
 - Existing Worker/service: **`sgbridgegame`**.
-- Public URL: <https://sgbridgegame.vocs.workers.dev>.
+- Public URL: <https://funcentral.vocs.io>, a Workers Custom Domain declared
+  in `wrangler.toml` (`[[routes]]`, `custom_domain = true`; zone `vocs.io`).
+- Legacy URL: <https://sgbridgegame.vocs.workers.dev> stays enabled
+  (`workers_dev = true`; without it, adding routes would disable it). It still
+  serves `/api/*`, so older webhooks/sockets keep working, while its pages
+  forward to the public URL with path and `#ROOM` intact (`static/fc-host.js`).
 - Existing D1 database: **`sg-bridge-users`**, binding **`DB`**.
 - Existing secrets: **`JWT_SECRET`** and **`TELEGRAM_BOT_TOKEN`**.
 - Public variable: **`TELEGRAM_BOT_USERNAME=funCentral_bot`**.
 - **`ALLOW_DEV_LOGIN` must be absent in production.** It also gates Regicide
   seed/debug conveniences; it is not just a UI switch.
 
-Fun Central is the product/repository name, not a reason to rename existing
+funCentral is the product/repository name, not a reason to rename existing
 Cloudflare resources. Keep the service/database names, binding identities,
-secrets and URLs so existing data, Telegram integration and links survive.
+secrets and the legacy workers.dev URL so existing data, Telegram integration
+and links survive.
 Never put credential values in documentation, shell arguments or commits.
 
 Run [PR validation](testing.md) before opening/updating a PR. Tests use local
@@ -34,9 +40,10 @@ version; do not treat a successful build alone as application verification.
 | --- | --- | --- |
 | `GAME_ROOM` | `GameRoom` | `v1` creates the existing SQLite-backed Bridge class |
 | `REGICIDE_ROOM` | `RegicideRoom` | `v2` adds the separate SQLite-backed Regicide class |
+| `TAIDI_ROOM` | `TaiDiRoom` | `v3` adds the separate SQLite-backed Tai Di class |
 
 Workers deployment applies the configured class migration. Keep `v1` and
-`GAME_ROOM` intact; `v2` does not replace Bridge. Future games append a new
+`GAME_ROOM` intact; `v2` and `v3` do not replace Bridge. Future games append a new
 migration tag, binding and exported class. These are **not D1 SQL migrations**.
 
 ## D1 migrations are a separate controlled step
@@ -109,10 +116,18 @@ runbook.
 ## Telegram integration
 
 The existing bot is **[@funCentral_bot](https://t.me/funCentral_bot)**. Its
-webhook is `/api/telegram` on the existing Worker origin. Bot-owner webhook
-or domain changes are separate intentional operations, not prerequisites for
-each game addition or each release. Never include a bot-token-bearing URL
-in the repository.
+webhook is `/api/telegram` on the Worker. Bot-owner webhook or domain changes
+are separate intentional operations, not prerequisites for each game addition
+or each release. Never include a bot-token-bearing URL in the repository.
+
+Two bot settings follow the public URL `funcentral.vocs.io`:
+
+- **Login Widget domain** (BotFather `/setdomain`). The widget works on one
+  domain only, so sign-in on the legacy workers.dev host stops once this
+  points at the public URL; that host's pages forward there anyway.
+- **Webhook URL** (`https://funcentral.vocs.io/api/telegram`). Join links in
+  bot messages use the origin the webhook was called on. A webhook still on
+  workers.dev keeps working, but its links rely on the page forward.
 
 `/newgame` offers inline game choices; a callback creates the chosen room in
 the same group. The registered command menu (`newgame`, `leaderboard`,
@@ -120,3 +135,14 @@ the same group. The registered command menu (`newgame`, `leaderboard`,
 update. Typed game shortcuts remain supported. See
 [architecture](architecture.md#shared-services-and-game-boundaries) for the
 catalog and static hub responsibilities.
+
+### Tai Di migration (pending)
+
+`0012_taidi.sql` creates four Tai Di tables (`taidi_ratings`, `taidi_games`,
+`taidi_rating_history`, `taidi_group_stats`) and two indexes, using
+`CREATE … IF NOT EXISTS`; it touches no existing data. Like `0011`, apply it
+as the separate controlled D1 step after inspecting the remote schema, ledger
+and pending list. Until it is applied, Tai Di gameplay still works: results
+stay in the room's durable outbox and retry every minute, and the Tai Di
+leaderboard and stats APIs return empty data. Do not rely on that fallback in
+place of applying the migration.
