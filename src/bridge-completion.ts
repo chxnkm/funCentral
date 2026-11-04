@@ -1,6 +1,7 @@
 import type { BidHistoryEntry, BidSuit, GameState, Hand, TrickLogEntry } from './types';
 import { getBidFromNum } from './bridge';
 import { escapeHtml } from './telegram';
+import { isLegacySeasonId } from './seasons';
 
 /** Ratings read when a hand is dealt, so the hand is judged on its starting ratings. */
 export interface RatingSnapshotSeat {
@@ -68,11 +69,18 @@ export interface BridgeCompletion {
   finalHands: Hand[];
   trickLog: TrickLogEntry[];
   redealCount: number;
+  /** Season the hand was dealt in (src/seasons.ts). */
+  seasonId: number;
   ratingSnapshot: RatingSnapshot | null;
-  /** true = done or not applicable for this hand. */
+  /**
+   * true = done or not applicable for this hand. In Season 1 `rated` is the
+   * legacy Elo and `shadow` the trial; later seasons rate in `rated` and skip `shadow`.
+   */
   steps: { rated: boolean; notify: boolean; log: boolean; betting: boolean; shadow: boolean };
-  /** Legacy Elo changes for this hand, filled in by the rated step. */
+  /** Legacy Elo changes for this hand (Season 1), filled in by the rated step. */
   legacy: LegacyEloRow[] | null;
+  /** Season rating changes, rounded as shown (later seasons), filled in by the rated step. */
+  seasonChanges?: LegacyEloRow[] | null;
   attempts: number;
   shadowAttempts: number;
   nextAttemptAt: number;
@@ -110,6 +118,8 @@ export function buildCompletion(
   now = Date.now(),
 ): BridgeCompletion {
   const completed = outcome.kind === 'completed';
+  const seasonId = state.seasonId ?? 1;
+  const legacySeason = isLegacySeasonId(seasonId);
   const replacedSeats = state.replacedSeats ?? [];
   // Rooms dealt before dealtBotSeats existed: a bot without an original human was dealt as a bot.
   const dealtAsBot = (p: GameState['players'][number]) =>
@@ -144,10 +154,16 @@ export function buildCompletion(
     finalHands: structuredClone(state.hands),
     trickLog: structuredClone(state.trickLog),
     redealCount: state.redealCount ?? 0,
+    seasonId,
     ratingSnapshot: snapshot && snapshot.gameId === state.gameId ? snapshot : null,
-    // Abandoned hands only feed the shadow ledger; practice hands skip ratings.
-    steps: { rated: !completed || state.isPractice, notify: !completed, log: !completed, betting: !completed, shadow: false },
+    // Season 1: abandoned hands only feed the shadow ledger; practice hands skip
+    // the legacy Elo. Later seasons write ratings, ledger and features in one
+    // rated step for every hand (practice and abandoned hands rate nobody).
+    steps: legacySeason
+      ? { rated: !completed || state.isPractice, notify: !completed, log: !completed, betting: !completed, shadow: false }
+      : { rated: false, notify: !completed, log: !completed, betting: !completed, shadow: true },
     legacy: null,
+    seasonChanges: null,
     attempts: 0,
     shadowAttempts: 0,
     nextAttemptAt: 0,
@@ -164,16 +180,17 @@ export function completionMessage(c: BridgeCompletion): string {
   const name = (seat: number) => escapeHtml(c.players[seat]?.name ?? `Seat ${seat + 1}`);
   const bidderSide = bidderSideSeats(c.bidder, c.partner);
   const defenders = [0, 1, 2, 3].filter((s) => !bidderSide.includes(s));
-  const suffix = c.isPractice ? '\n(practice — unrated)' : legacyEloLines(c, [...bidderSide, ...defenders], name);
+  const changes = isLegacySeasonId(c.seasonId) ? c.legacy : c.seasonChanges;
+  const suffix = c.isPractice ? '\n(practice — unrated)' : ratingLines(changes ?? null, c, [...bidderSide, ...defenders], name);
   return c.bidderWon
     ? `🏆 ${bidderSide.map(name).join(' & ')} won!\nBid ${bidStr}, made ${bidderTricks(c)}/${c.setsNeeded} tricks${suffix}`
     : `🛡️ ${defenders.map(name).join(' & ')} defended!\n${name(c.bidder)}'s ${bidStr} bid failed${suffix}`;
 }
 
-function legacyEloLines(c: BridgeCompletion, seatOrder: number[], name: (seat: number) => string): string {
+function ratingLines(changes: LegacyEloRow[] | null, c: BridgeCompletion, seatOrder: number[], name: (seat: number) => string): string {
   const lines = seatOrder.flatMap((seat) => {
     const telegramId = c.players[seat] ? ratedTelegramId(c.players[seat]) : null;
-    const row = c.legacy?.find((r) => r.telegramId === telegramId);
+    const row = changes?.find((r) => r.telegramId === telegramId);
     return row ? [`  ${name(seat)}: ${row.delta >= 0 ? '+' : ''}${row.delta} → ${row.eloAfter}`] : [];
   });
   return lines.length > 0 ? '\n' + lines.join('\n') : '';

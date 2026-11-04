@@ -65,6 +65,11 @@ export interface SkillGame {
   bidderWon: boolean;
   isPractice: boolean;
   seats: SkillSeat[];
+  /**
+   * Official seasons rate a hand a bot finished for a player who left, crediting
+   * that player, so leaving cannot avoid a loss. The trial only records them.
+   */
+  replacementIsRated?: boolean;
 }
 
 export interface SkillPlayerResult {
@@ -93,7 +98,7 @@ export interface SkillGameResult {
 export function exclusionFor(game: SkillGame): SkillExclusion | null {
   if (game.isPractice) return 'practice';
   if (game.seats.some((s) => s.isBot || s.telegramId === null)) return 'bot';
-  if (game.seats.some((s) => s.replaced)) return 'replacement';
+  if (!game.replacementIsRated && game.seats.some((s) => s.replaced)) return 'replacement';
   if (game.bidder === game.partner) return 'solo';
   if (game.seats.some((s) => s.rating === null || s.games === null)) return 'no-snapshot';
   return null;

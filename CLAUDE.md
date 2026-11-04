@@ -96,6 +96,7 @@ See [deployment](docs/deployment.md) for the workflow and rollout checkpoint.
 - **`src/stats-db.ts`** — `persistRatedResult` (users counters, `group_stats`, pair Elo, `elo_history`, `game_records` in one guarded transaction) and the stats queries. `src/elo.ts` keeps the legacy formula.
 - **`src/bridge-completion.ts`** — Completion record saved with the final state, group result message, and who is rated (`ratedTelegramId`).
 - **`src/skill-rating.ts`, `src/rating-db.ts`, `src/deal-features.ts`** — Shadow `skill-v1` rating (pure), its snapshot/ledger/events persistence, and starting-hand features. Shadow only: no board reads them yet. Plan and queries: `docs/bridge-rating.md`.
+- **`src/seasons.ts`, `src/season-db.ts`** — Bridge season schedule (Season 2 starts fresh 2026-12-01 00:00 SGT, rated by `season-2`) and season-aware boards, stats, rating changes and seat standings. A hand belongs to the season it was **dealt** in (`state.seasonId`); Season 2 hands never write `users.elo`/counters, `elo_history` or `group_stats`, so Season 1 stays frozen. `?season=N` reads a started season; `TEST_NOW_MS` pins the clock only with `ALLOW_DEV_LOGIN=1`.
 
 ### Bridge Frontend (Vanilla JS SPA)
 

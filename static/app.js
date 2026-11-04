@@ -54,6 +54,8 @@ let statsMinGames = 3;
 let statsSort = { col: 'winPct', dir: 'desc' };
 let bettingSort = { col: 'bettingElo', dir: 'desc' };
 let statsGroupId = null;
+let statsSeasonId = null; // null = current Bridge season
+let statsSeasons = [];
 
 // Auth state
 let authToken = localStorage.getItem('authToken') || null;
@@ -545,14 +547,18 @@ async function showStats() {
 }
 
 async function loadStats() {
-  const groupParam = statsGroupId ? `?groupId=${encodeURIComponent(statsGroupId)}` : '';
+  const params = new URLSearchParams();
+  if (statsGroupId) params.set('groupId', statsGroupId);
+  if (statsSeasonId) params.set('season', String(statsSeasonId));
+  const query = params.toString() ? `?${params}` : '';
   try {
     const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
-    const [playersRes, pairsRes, groupsRes, bettingRes] = await Promise.all([
-      fetch(`/api/stats${groupParam}`),
-      fetch(`/api/stats/pairs${groupParam}`),
+    const [playersRes, pairsRes, groupsRes, bettingRes, seasonsRes] = await Promise.all([
+      fetch(`/api/stats${query}`),
+      fetch(`/api/stats/pairs${query}`),
       fetch('/api/groups'),
       fetch('/api/betting/leaderboard', { headers }),
+      fetch('/api/bridge/seasons'),
     ]);
     if (playersRes.ok) statsData.players = await playersRes.json();
     if (pairsRes.ok) statsData.pairs = await pairsRes.json();
@@ -561,10 +567,32 @@ async function loadStats() {
       renderStatsGroupDropdown();
     }
     if (bettingRes.ok) statsData.betting = await bettingRes.json();
+    if (seasonsRes.ok) {
+      statsSeasons = (await seasonsRes.json()).seasons ?? [];
+      renderStatsSeasonDropdown();
+    }
   } catch {
     // network error — render with whatever we have
   }
   renderStatsTab();
+}
+
+// Bridge seasons: the dropdown appears once a second season has started.
+function renderStatsSeasonDropdown() {
+  const sel = $('stats-season-select');
+  if (!sel) return;
+  if (statsSeasons.length < 2) {
+    sel.style.display = 'none';
+    return;
+  }
+  sel.style.display = '';
+  sel.innerHTML = statsSeasons
+    .map((s) => `<option value="${s.current ? '' : s.id}">${esc(s.name)}${s.current ? '' : ' (final)'}</option>`).join('');
+  sel.value = statsSeasonId ? String(statsSeasonId) : '';
+  sel.onchange = () => {
+    statsSeasonId = sel.value ? Number(sel.value) : null;
+    loadStats();
+  };
 }
 
 function renderStatsGroupDropdown() {

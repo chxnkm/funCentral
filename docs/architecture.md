@@ -117,6 +117,10 @@ holds shared profiles/groups and persistent game statistics/history.
   no-ops; Elo changes are added, not overwritten. A shadow skill rating and
   season tables (`bridge_*`, migration `0013`) are recorded beside the
   legacy Elo without changing any board; see [Bridge rating](bridge-rating.md).
+- Bridge seasons (`src/seasons.ts`): a hand belongs to the season it was
+  dealt in. From 1 December 2026 (SGT) Season 2 hands are rated by the fresh
+  `season-2` skill rating and never touch the Season 1 legacy tables; boards,
+  stats and posts read the current season, and `?season=1` the final Season 1.
 - Regicide owns `regicide_ratings`, `regicide_games`,
   `regicide_rating_history` and `regicide_group_stats`. Rating measures team
   progress against the castle, independently of Bridge ELO. Wins/losses are
