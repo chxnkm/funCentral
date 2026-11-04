@@ -158,9 +158,9 @@ Log loss is easier offline (export the ledger); D1 may not provide `ln()`.
 
 ## Seasons
 
-Decisions still open: the trial length, the Season 1 end date, and whether
-Season 2 starts fresh (recommended, because the formulas differ) or carries
-part of the legacy Elo.
+Decided (2026-11-04): Season 2 starts **fresh at 1000 on 1 December 2026,
+00:00 Singapore time**, rated by the skill rating. Season 1 ends then and the
+shadow trial runs until then. The Season 2 switch ships separately.
 
 **Season close runbook** (a separate, verified release step, not part of
 deploying this code):
@@ -183,8 +183,8 @@ Never use `0006_stats_reset.sql` for a season change: it deletes history.
 
 ## Next steps
 
-1. Apply `0013` through the controlled D1 workflow in
-   [deployment](deployment.md) after this code is live.
+1. `0013` was applied to production on 2026-11-04 (see
+   [deployment](deployment.md)); the trial starts when this code is live.
 2. Let the trial run, then review the queries above, especially
    `partner-gap`, `prediction-accuracy` and `solo-contracts`.
 3. Post-game deal insight (for example "your side held 24 of 40 high-card

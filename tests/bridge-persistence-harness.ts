@@ -1,6 +1,6 @@
 // Local-only workerd/SQLite harness for Bridge hand completion. Test-only
 // inspection and retry routes are bundled here, never into the production Worker.
-import { Miniflare, Response } from 'miniflare';
+import { Miniflare, Response, convertV4MiniflareOptions } from 'miniflare';
 import { build } from 'esbuild';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -50,18 +50,18 @@ export async function createBridgeHarness({ skipMigrations = [] as string[] } = 
   });
   let mf: Miniflare;
   const launch = async () => {
-    mf = new Miniflare({
+    mf = new Miniflare(convertV4MiniflareOptions({
       modules: true, script: outputFiles[0].text,
       compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'],
       durableObjects: { ROOM: { className: 'TestRoom', useSQLite: true } },
-      durableObjectsPersist: path.join(state, 'rooms'),
-      d1Databases: ['DB'], d1Persist: path.join(state, 'db'),
+      resourcePersistencePath: state,
+      d1Databases: ['DB'],
       bindings: { TELEGRAM_BOT_TOKEN: 'local-test-token' },
       outboundService: async (request: Request) => {
         if (new URL(request.url).pathname.endsWith('/sendMessage')) telegram.push(await request.json() as { chat_id: string; text: string });
         return Response.json({ ok: true, result: { status: 'member' } });
       },
-    });
+    }));
     await mf.ready;
   };
   await launch();
