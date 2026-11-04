@@ -1,5 +1,4 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import type { Player } from './types';
 
 export interface UserRow {
   telegram_id: number;
@@ -132,36 +131,6 @@ export async function upsertGroup(
     )
     .bind(groupId, groupName, Math.floor(Date.now() / 1000))
     .run();
-}
-
-/**
- * Update group_stats for verified group members after a game ends.
- * Skips guests (non-tg_ IDs) and non-members (isGroupMember !== true).
- */
-export async function recordGroupResult(
-  db: D1Database,
-  groupId: string,
-  players: Player[],
-  winnerSeats: number[],
-): Promise<void> {
-  await Promise.all(
-    players.map((player) => {
-      if (!player.id.startsWith('tg_')) return Promise.resolve();
-      if (!player.isGroupMember) return Promise.resolve();
-      const telegramId = Number(player.id.slice(3));
-      const won = winnerSeats.includes(player.seat) ? 1 : 0;
-      return db
-        .prepare(
-          `INSERT INTO group_stats (group_id, telegram_id, wins, games_played)
-           VALUES (?, ?, ?, 1)
-           ON CONFLICT(group_id, telegram_id) DO UPDATE SET
-             games_played = games_played + 1,
-             wins = wins + ?`,
-        )
-        .bind(groupId, telegramId, won, won)
-        .run();
-    }),
-  );
 }
 
 export interface GroupLeaderboardEntry {

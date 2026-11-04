@@ -1,8 +1,9 @@
-import type { D1Database } from '@cloudflare/workers-types';
-import type { Player } from './types';
+import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
 import { BID_SUITS } from './types';
 import { computeEloDeltas } from './elo';
 import type { EloPlayer } from './elo';
+import { getWinnerSeats } from './stats';
+import { ratedTelegramId, type BridgeCompletion, type LegacyEloRow } from './bridge-completion';
 
 export interface PlayerStatRow {
   telegramId: number;
@@ -25,23 +26,27 @@ export interface PairStatRow {
   winPct: number;
 }
 
+/** One game_records row (legacy stats), for an authenticated player. */
+export interface GameRecordRow {
+  telegramId: number;
+  seat: number;
+  role: 'bidder' | 'partner' | 'opposition';
+  won: 0 | 1;
+  tricksWon: number;
+  partnerTelegramId: number | null;
+}
+
 /**
- * Inserts one game_records row per authenticated player.
- * Guests (non-tg_ IDs) and bots are silently skipped.
+ * Builds one game_records row per rated player (telegramId null = guest or bot, skipped).
+ * A seat a bot took over mid-hand still counts for its original human.
  */
-export async function recordGameStats(
-  db: D1Database,
-  gameId: string,
-  groupId: string | null,
-  players: Player[],
+export function gameRecordRows(
+  players: { seat: number; telegramId: number | null }[],
   bidderSeat: number,
   partnerSeat: number,
-  bid: number,
   sets: number[],
   winnerSeats: number[],
-): Promise<void> {
-  const bidLevel = Math.floor(bid / 5) + 1;
-  const bidSuit = BID_SUITS[bid % 5];
+): GameRecordRow[] {
   const isSoloBidder = bidderSeat === partnerSeat;
   const bidderTeam = isSoloBidder ? [bidderSeat] : [bidderSeat, partnerSeat];
   const oppTeam = [0, 1, 2, 3].filter((s) => !bidderTeam.includes(s));
@@ -49,57 +54,40 @@ export async function recordGameStats(
   const bidderTricksWon = bidderTeam.reduce((sum, s) => sum + (sets[s] ?? 0), 0);
   const oppTricksWon = oppTeam.reduce((sum, s) => sum + (sets[s] ?? 0), 0);
 
-  // seat → telegram_id lookup (null for guests); use originalPlayerId for bot-replaced seats
+  // seat → telegram_id lookup (null for guests and bots)
   const seatToTgId: Record<number, number | null> = {};
-  for (const p of players) {
-    const effectiveId = p.originalPlayerId || p.id;
-    seatToTgId[p.seat] = effectiveId.startsWith('tg_') ? Number(effectiveId.slice(3)) : null;
-  }
+  for (const p of players) seatToTgId[p.seat] = p.telegramId;
 
-  const playedAt = Math.floor(Date.now() / 1000);
+  return players.flatMap((player): GameRecordRow[] => {
+    const { seat, telegramId } = player;
+    if (telegramId === null) return [];
+    let role: GameRecordRow['role'];
+    let partnerTelegramId: number | null = null;
 
-  const stmts = players
-    .filter((p) => (p.originalPlayerId || p.id).startsWith('tg_'))
-    .map((player) => {
-      const effectiveId = player.originalPlayerId || player.id;
-      const telegramId = Number(effectiveId.slice(3));
-      const { seat } = player;
-      const won = winnerSeats.includes(seat) ? 1 : 0;
-      const tricksWon = bidderTeam.includes(seat) ? bidderTricksWon : oppTricksWon;
-
-      let role: 'bidder' | 'partner' | 'opposition';
-      let partnerTgId: number | null = null;
-
-      if (seat === bidderSeat) {
-        role = 'bidder';
-        partnerTgId = isSoloBidder ? null : (seatToTgId[partnerSeat] ?? null);
-      } else if (!isSoloBidder && seat === partnerSeat) {
-        role = 'partner';
-        partnerTgId = seatToTgId[bidderSeat] ?? null;
-      } else {
-        role = 'opposition';
-        if (!isSoloBidder) {
-          const oppPartnerSeat = oppTeam.find((s) => s !== seat) ?? null;
-          partnerTgId = oppPartnerSeat !== null ? (seatToTgId[oppPartnerSeat] ?? null) : null;
-        }
-        // isSoloBidder: no natural pairs, leave partnerTgId as null
+    if (seat === bidderSeat) {
+      role = 'bidder';
+      partnerTelegramId = isSoloBidder ? null : (seatToTgId[partnerSeat] ?? null);
+    } else if (!isSoloBidder && seat === partnerSeat) {
+      role = 'partner';
+      partnerTelegramId = seatToTgId[bidderSeat] ?? null;
+    } else {
+      role = 'opposition';
+      if (!isSoloBidder) {
+        const oppPartnerSeat = oppTeam.find((s) => s !== seat) ?? null;
+        partnerTelegramId = oppPartnerSeat !== null ? (seatToTgId[oppPartnerSeat] ?? null) : null;
       }
+      // isSoloBidder: no natural pairs, leave partnerTelegramId as null
+    }
 
-      return db
-        .prepare(
-          `INSERT INTO game_records
-           (game_id, group_id, played_at, telegram_id, role, won, bid_level, bid_suit, tricks_won, partner_telegram_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          gameId, groupId, playedAt,
-          telegramId, role, won, bidLevel, bidSuit, tricksWon, partnerTgId,
-        );
-    });
-
-  if (stmts.length > 0) {
-    await db.batch(stmts);
-  }
+    return [{
+      telegramId,
+      seat,
+      role,
+      won: winnerSeats.includes(seat) ? 1 : 0,
+      tricksWon: bidderTeam.includes(seat) ? bidderTricksWon : oppTricksWon,
+      partnerTelegramId,
+    }];
+  });
 }
 
 function pct(wins: number, games: number): number {
@@ -206,82 +194,123 @@ export async function getPairStats(db: D1Database, groupId?: string): Promise<Pa
   }));
 }
 
+// Every rated write for a hand is skipped once its game_records rows exist. Those rows are
+// inserted last in the same transaction, so a retried or duplicated completion is a no-op.
+const NOT_RECORDED = 'NOT EXISTS (SELECT 1 FROM game_records WHERE game_id = ?)';
+
 /**
- * Computes pair ELO deltas after a game and updates users.elo + elo_history.
- * Only authenticated players (tg_ IDs) are included. Guests and bots are skipped.
- * All DB writes are batched in a single db.batch() call.
+ * Records a rated hand's legacy stats in one D1 transaction: users wins/games_played,
+ * group_stats, pair Elo (users.elo + elo_history) and game_records. Formula and
+ * eligibility are unchanged from the previous per-table writers; Elo is added to the
+ * stored value instead of overwriting it, so concurrent games cannot lose updates.
+ * Returns the hand's Elo changes as stored, whether this call or an earlier one applied them.
  */
-export interface EloResult {
-  seat: number;
-  name: string;
-  delta: number;
-  eloAfter: number;
-}
-
-export async function recordEloUpdate(
+export async function persistRatedResult(
   db: D1Database,
-  gameId: string,
-  players: Player[],
-  bidderSeat: number,
-  partnerSeat: number,
-  winnerSeats: number[],
-): Promise<EloResult[]> {
-  // Use originalPlayerId for bot-replaced seats so the original human's Elo is updated
-  const authPlayers = players.filter((p) => (p.originalPlayerId || p.id).startsWith('tg_'));
-  if (authPlayers.length < 2) return [];
-
-  const telegramIds = authPlayers.map((p) => Number((p.originalPlayerId || p.id).slice(3)));
-  const placeholders = telegramIds.map(() => '?').join(',');
-  const userRows = await db
-    .prepare(`SELECT telegram_id, elo, games_played FROM users WHERE telegram_id IN (${placeholders})`)
-    .bind(...telegramIds)
-    .all<{ telegram_id: number; elo: number; games_played: number }>();
-
-  const userMap = new Map(
-    (userRows.results ?? []).map((r) => [r.telegram_id, r]),
+  c: BridgeCompletion,
+): Promise<{ applied: boolean; elo: LegacyEloRow[] }> {
+  const winnerSeats = getWinnerSeats(c.bidder, c.partner, c.bidderWon === true);
+  const rows = gameRecordRows(
+    c.players.map((p) => ({ seat: p.seat, telegramId: ratedTelegramId(p) })),
+    c.bidder, c.partner, c.sets, winnerSeats,
   );
+  const playedAt = Math.floor(c.completedAt / 1000);
+  const stmts: D1PreparedStatement[] = [];
 
-  const seatToPlayer = new Map<number, EloPlayer>();
-  for (const p of authPlayers) {
-    const tgId = Number((p.originalPlayerId || p.id).slice(3));
-    const row = userMap.get(tgId);
-    if (row) seatToPlayer.set(p.seat, { telegramId: tgId, elo: row.elo, gamesPlayed: row.games_played });
+  for (const row of rows) {
+    stmts.push(db
+      .prepare(`UPDATE users SET games_played = games_played + 1, wins = wins + ? WHERE telegram_id = ? AND ${NOT_RECORDED}`)
+      .bind(row.won, row.telegramId, c.gameId));
   }
 
-  const isSoloBid = bidderSeat === partnerSeat;
-  const bidderTeamSeats = isSoloBid ? [bidderSeat] : [bidderSeat, partnerSeat];
-  const oppTeamSeats = [0, 1, 2, 3].filter((s) => !bidderTeamSeats.includes(s));
+  if (c.groupId) {
+    // Verified group members only; a bot-replaced seat is not counted for the group.
+    for (const p of c.players) {
+      if (p.dealtAsBot || !p.id.startsWith('tg_') || !p.isGroupMember) continue;
+      stmts.push(db
+        .prepare(
+          `INSERT INTO group_stats (group_id, telegram_id, wins, games_played)
+           SELECT ?, ?, ?, 1 WHERE ${NOT_RECORDED} AND EXISTS (SELECT 1 FROM groups WHERE group_id = ?)
+           ON CONFLICT(group_id, telegram_id) DO UPDATE SET
+             games_played = games_played + 1,
+             wins = wins + excluded.wins`,
+        )
+        .bind(c.groupId, Number(p.id.slice(3)), winnerSeats.includes(p.seat) ? 1 : 0, c.gameId, c.groupId));
+    }
+  }
 
+  for (const change of await legacyEloChanges(db, c, rows, winnerSeats)) {
+    stmts.push(
+      db.prepare(`UPDATE users SET elo = elo + ? WHERE telegram_id = ? AND ${NOT_RECORDED}`)
+        .bind(change.delta, change.telegramId, c.gameId),
+      db.prepare(
+        `INSERT INTO elo_history (game_id, telegram_id, elo_before, elo_after, delta, played_at)
+         SELECT ?, ?, ?, ?, ?, ? WHERE ${NOT_RECORDED}`,
+      ).bind(c.gameId, change.telegramId, change.eloBefore, change.eloAfter, change.delta, playedAt, c.gameId),
+    );
+  }
+
+  if (rows.length > 0) {
+    const bidLevel = Math.floor(c.bid / 5) + 1;
+    const bidSuit = BID_SUITS[c.bid % 5];
+    stmts.push(db
+      .prepare(
+        `INSERT INTO game_records
+           (game_id, group_id, played_at, telegram_id, role, won, bid_level, bid_suit, tricks_won, partner_telegram_id)
+         SELECT v.column1, v.column2, v.column3, v.column4, v.column5, v.column6, v.column7, v.column8, v.column9, v.column10
+         FROM (VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}) AS v
+         WHERE ${NOT_RECORDED} AND EXISTS (SELECT 1 FROM users u WHERE u.telegram_id = v.column4)`,
+      )
+      .bind(
+        ...rows.flatMap((r) => [c.gameId, c.groupId, playedAt, r.telegramId, r.role, r.won, bidLevel, bidSuit, r.tricksWon, r.partnerTelegramId]),
+        c.gameId,
+      ));
+  }
+
+  if (stmts.length === 0) return { applied: false, elo: [] };
+  const results = await db.batch(stmts);
+  const applied = rows.length > 0 && (results[results.length - 1].meta?.changes ?? 0) > 0;
+
+  const stored = await db
+    .prepare('SELECT telegram_id, elo_before, elo_after, delta FROM elo_history WHERE game_id = ? ORDER BY id')
+    .bind(c.gameId)
+    .all<{ telegram_id: number; elo_before: number; elo_after: number; delta: number }>();
+  return {
+    applied,
+    elo: (stored.results ?? []).map((r) => ({ telegramId: r.telegram_id, eloBefore: r.elo_before, eloAfter: r.elo_after, delta: r.delta })),
+  };
+}
+
+/** Pair Elo exactly as before: needs two or more authenticated players, and a users row on each side. */
+async function legacyEloChanges(
+  db: D1Database,
+  c: BridgeCompletion,
+  rows: GameRecordRow[],
+  winnerSeats: number[],
+): Promise<LegacyEloRow[]> {
+  if (rows.length < 2) return [];
+  const userRows = await db
+    .prepare(`SELECT telegram_id, elo, games_played FROM users WHERE telegram_id IN (${rows.map(() => '?').join(',')})`)
+    .bind(...rows.map((r) => r.telegramId))
+    .all<{ telegram_id: number; elo: number; games_played: number }>();
+  const userMap = new Map((userRows.results ?? []).map((r) => [r.telegram_id, r]));
+
+  const seatToPlayer = new Map<number, EloPlayer>();
+  for (const row of rows) {
+    const user = userMap.get(row.telegramId);
+    // games_played + 1: the K-factor used to be chosen after this hand had already been counted.
+    if (user) seatToPlayer.set(row.seat, { telegramId: row.telegramId, elo: user.elo, gamesPlayed: user.games_played + 1 });
+  }
+
+  const bidderTeamSeats = c.bidder === c.partner ? [c.bidder] : [c.bidder, c.partner];
+  const oppTeamSeats = [0, 1, 2, 3].filter((s) => !bidderTeamSeats.includes(s));
   const teamA = bidderTeamSeats.map((s) => seatToPlayer.get(s)).filter(Boolean) as EloPlayer[];
   const teamB = oppTeamSeats.map((s) => seatToPlayer.get(s)).filter(Boolean) as EloPlayer[];
-
   if (teamA.length === 0 || teamB.length === 0) return [];
 
-  const teamAWon = winnerSeats.includes(bidderSeat);
-  const deltas = computeEloDeltas(teamA, teamB, teamAWon);
-
-  const playedAt = Math.floor(Date.now() / 1000);
-  const allPlayers = [...teamA, ...teamB];
-
-  const results: EloResult[] = [];
-  const stmts = allPlayers.flatMap((player) => {
-    const delta = deltas.get(player.telegramId) ?? 0;
-    const newElo = player.elo + delta;
-    const p = players.find((pl) => (pl.originalPlayerId || pl.id) === `tg_${player.telegramId}`);
-    if (p) results.push({ seat: p.seat, name: p.name, delta, eloAfter: newElo });
-    return [
-      db
-        .prepare('UPDATE users SET elo = ? WHERE telegram_id = ?')
-        .bind(newElo, player.telegramId),
-      db
-        .prepare(
-          `INSERT INTO elo_history (game_id, telegram_id, elo_before, elo_after, delta, played_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(gameId, player.telegramId, player.elo, newElo, delta, playedAt),
-    ];
+  const deltas = computeEloDeltas(teamA, teamB, winnerSeats.includes(c.bidder));
+  return [...teamA, ...teamB].map((p) => {
+    const delta = deltas.get(p.telegramId) ?? 0;
+    return { telegramId: p.telegramId, eloBefore: p.elo, eloAfter: p.elo + delta, delta };
   });
-
-  await db.batch(stmts);
-  return results;
 }

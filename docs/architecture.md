@@ -38,6 +38,8 @@ src/
   god-bot.ts             Bridge full-information bot
   history.ts, game-logging.ts, move-rating.ts
   elo.ts, stats*.ts, betting-db.ts
+  bridge-completion.ts   Durable record of a finished/abandoned Bridge hand
+  skill-rating.ts, rating-db.ts, deal-features.ts   Shadow skill rating trial
   telegram.ts            Telegram parsing and Bot API helpers
   regicide/
     engine.ts            Pure Regicide rules
@@ -101,11 +103,20 @@ The Python files, `bot/`, `game/`, `requirements.txt`, Docker files and
 Room state and reconnect/session data live in Durable Object storage; D1
 holds shared profiles/groups and persistent game statistics/history.
 
-- Bridge's existing tables and `users.elo` remain unchanged. Practice status
-  is snapshotted at deal time (two or more bots); practice games are logged
-  for participant history/replay but excluded from rated records and ELO.
+- Bridge's existing tables and the `users.elo` formula remain unchanged.
+  Practice status is snapshotted at deal time (two or more bots); practice
+  games are logged for participant history/replay but excluded from rated
+  records and ELO. Only humans seated when a hand is dealt are rated for it.
   A game ends once the contract result is determined, not necessarily after
-  all 13 tricks. Empty Bridge rooms use a five-minute cleanup alarm.
+  all 13 tricks. Empty Bridge rooms use a five-minute cleanup alarm, and are
+  kept while any finished hand's results are still pending.
+- Bridge saves the final state with a completion record before D1/Telegram
+  work, then retries each step (rated stats, group post, replay log, bets,
+  rating trial) through alarms until it succeeds. Rated writes are one
+  transaction guarded by the hand's `game_records` rows, so repeats are
+  no-ops; Elo changes are added, not overwritten. A shadow skill rating and
+  season tables (`bridge_*`, migration `0013`) are recorded beside the
+  legacy Elo without changing any board; see [Bridge rating](bridge-rating.md).
 - Regicide owns `regicide_ratings`, `regicide_games`,
   `regicide_rating_history` and `regicide_group_stats`. Rating measures team
   progress against the castle, independently of Bridge ELO. Wins/losses are

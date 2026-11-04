@@ -99,6 +99,28 @@ repeat the read-only inspection before future changes.
   from its durable outbox. Bridge, including the bot's Bridge board, remains
   independent. Apply the migration rather than relying on this fallback.
 
+### Bridge rating foundation (`0013`)
+
+`0013_bridge_rating_foundation.sql` adds the Bridge season, archive, hand
+ledger, deal-feature and shadow-rating tables (`bridge_*`) and seeds Season 1
+as active. It is additive (`CREATE … IF NOT EXISTS`, one `INSERT OR IGNORE`)
+and changes no existing row. Either order with the code is safe: earlier code
+never reads these tables, and without them Bridge plays and records legacy
+Elo, stats and history as before, only skipping the trial data (logged as a
+warning per hand). Once both are live, check that new hands appear in
+`bridge_game_ledger`.
+
+Rollout checkpoint (historical, not a permanent assertion): on 2026-11-04 the
+remote ledger showed `0001`–`0012` applied with `0013` as the only pending
+migration; `0013` was applied ahead of the code and verified (seven `bridge_*`
+tables, Season 1 seeded from the first rated hand, no pending migrations).
+Time Travel bookmark before the change:
+`000007bb-00000000-00005119-6a5364c238f6aa3a54cc2707f7ef028a`.
+
+The Season 1 close (`docs/bridge-season-close.sql`) is **not** a migration.
+It is a separate, scheduled step in the [Bridge rating](bridge-rating.md)
+runbook.
+
 ## Telegram integration
 
 The existing bot is **[@funCentral_bot](https://t.me/funCentral_bot)**. Its

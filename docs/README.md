@@ -9,6 +9,7 @@
 | [Development](development.md) | Locked dependencies, local-only configuration/login and local database setup |
 | [Testing](testing.md) | Required PR runner, focused checks, local ports and honest coverage reporting |
 | [Deployment](deployment.md) | Workers Builds releases, existing resources/secrets and safe migration workflow |
+| [Bridge rating](bridge-rating.md) | Skill rating plan, shadow trial, evaluation queries and the season-close runbook |
 | [Contributor code notes](../CLAUDE.md) / [agent rules](../AGENTS.md) | Repository conventions and GitNexus requirements |
 
 The current application is the multi-game Worker, not the root archived

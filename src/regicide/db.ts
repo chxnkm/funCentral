@@ -173,7 +173,7 @@ export async function getRegicideStats(db: D1Database): Promise<RegicidePlayerSt
   }));
 }
 
-/** Counts a finished game for the group, for players verified as members (like Bridge's recordGroupResult). */
+/** Counts a finished game for the group, for players verified as members (like Bridge's group_stats). */
 export async function recordRegicideGroupResult(db: D1Database, groupId: string, memberIds: number[], defeated: number, won: boolean): Promise<void> {
   if (memberIds.length === 0) return;
   await db.batch([...new Set(memberIds)].map((id) =>
