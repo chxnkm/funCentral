@@ -1,6 +1,6 @@
 // Local-only workerd/SQLite harness. Test-only inspection and retry routes are
 // bundled here, never into the production Worker or its public debug endpoint.
-import { Miniflare, Response } from 'miniflare';
+import { Miniflare, Response, convertV4MiniflareOptions } from 'miniflare';
 import { build } from 'esbuild';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -55,15 +55,15 @@ export async function createTaiDiHarness(outbound?: (request: Request) => Promis
   });
   let mf: Miniflare;
   const launch = async () => {
-    mf = new Miniflare({
+    mf = new Miniflare(convertV4MiniflareOptions({
       modules: true, script: outputFiles[0].text,
       compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'],
       durableObjects: { ROOM: { className: 'TestRoom', useSQLite: true } },
-      durableObjectsPersist: path.join(state, 'rooms'),
-      d1Databases: ['DB'], d1Persist: path.join(state, 'db'),
+      resourcePersistencePath: state,
+      d1Databases: ['DB'],
       bindings: { TELEGRAM_BOT_TOKEN: 'local-test-token', ALLOW_DEV_LOGIN: '1', TEST_RATING_GATE: ratingGate },
       outboundService: outbound ?? (async () => Response.json({ ok: true, result: { status: 'member' } })),
-    });
+    }));
     await mf.ready;
   };
   await launch();
