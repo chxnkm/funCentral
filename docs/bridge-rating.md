@@ -1,8 +1,9 @@
 # Bridge skill rating: plan, trial and seasons
 
-Status: **V1 foundation in shadow mode.** The leaderboard, group boards,
-Telegram posts and game-over screen still use the legacy Elo (`users.elo`),
-unchanged. The proposed rating is calculated beside it for comparison only.
+Status: **Season 1 (legacy Elo) with the rating trial in shadow mode; Season 2
+rated by the skill rating from 1 December 2026, 00:00 SGT.** Until then the
+boards and posts use the legacy Elo (`users.elo`), unchanged, and the skill
+rating is calculated beside it for comparison only.
 
 ## The agreed direction
 
@@ -158,36 +159,68 @@ Log loss is easier offline (export the ledger); D1 may not provide `ln()`.
 
 ## Seasons
 
-Decided (2026-11-04): Season 2 starts **fresh at 1000 on 1 December 2026,
-00:00 Singapore time**, rated by the skill rating. Season 1 ends then and the
-shadow trial runs until then. The Season 2 switch ships separately.
+Season 2 starts **fresh at 1000 on 1 December 2026, 00:00 Singapore time**
+(2026-11-30 16:00 UTC), decided 2026-11-04. Season 1 is the legacy Elo; the
+shadow trial runs until Season 2 starts.
 
-**Season close runbook** (a separate, verified release step, not part of
-deploying this code):
+### How the switch works
 
-1. Agree the date and announce it. Confirm the trial results support the
-   switch.
-2. Ship the Season 2 code: leaderboard, group boards, stats, Telegram posts
-   and the game-over screen read the Season 2 rating; Season 1 standings get a
-   read-only view. (Not built yet.)
-3. Pause new Bridge deals and let hands in progress finish. Confirm no room
-   has pending completions.
-4. Note a D1 Time Travel bookmark or take an export.
-5. Run [`bridge-season-close.sql`](bridge-season-close.sql): it copies the
-   final standings and group standings into the archive tables and marks
-   Season 1 closed. It deletes and resets nothing.
-6. Insert Season 2 as the active season with its rating system, then resume
-   deals. Verify the boards and a completed hand.
+- The schedule is in code (`src/seasons.ts`); migration `0014` adds the
+  matching `bridge_seasons` row and `bridge_season_group_stats`. No deploy or
+  database step is needed at midnight.
+- **A hand belongs to the season it was dealt in.** A Season 1 hand that ends
+  after midnight still updates the legacy Elo; the first hands dealt after
+  midnight are Season 2. So deals need no pause at the boundary.
+- **Season 2 hands are rated by the `season-2` system** (the `skill-v1`
+  formula, every player starting at 1000, provisional below 20 hands) in the
+  completion's rated step, retried until it succeeds. The same transaction
+  writes the rating events, `game_records` (for the stats screen), per-group
+  season statistics, deal features and the ledger.
+- **Season 1 data is frozen by construction.** Season 2 hands never touch
+  `users.elo`, the users win/game counters, `elo_history` or `group_stats`,
+  so the Season 1 board stays exactly as its last hand left it.
+- **Rules that change with Season 2** (from the agreed plan): hands dealt with
+  a bot and solo contracts are recorded but not rated; a player who leaves
+  mid-hand still takes that hand's result, so leaving cannot avoid a loss;
+  a hand without a deal-time snapshot is rated from the ratings at the end
+  rather than dropped.
+- **Reads follow the current season:** the Bridge and group leaderboards, the
+  bot's `/leaderboard`, the stats screen, the game-over rating changes, seat
+  ratings and the group result post. `?season=1` (the leaderboard card's
+  Season switch and the stats screen's season menu, shown once Season 2 has
+  started) keeps Season 1 viewable as the final board.
+
+Known incentive to watch: with solo contracts unrated, a bidder can call
+their own card to make a hand unrated. Track it with the `solo-contracts`
+query and rate solo hands once a fair 1-v-3 formula is agreed.
+
+### Before 1 December
+
+1. Merge the foundation PR and the Season 2 PR.
+2. Apply `0014` through the controlled D1 workflow in
+   [deployment](deployment.md) (additive, any time before the start).
+3. Review the trial queries; tune `skill-v1` constants before the start if
+   needed. Season 2 starts fresh, so nothing has to be migrated.
+4. Announce the date in the groups.
+
+### After 1 December: close Season 1
+
+1. Wait until hands dealt before midnight have finished and no room has
+   pending completions (rooms keep them until persisted; a day is ample).
+2. Note a D1 Time Travel bookmark.
+3. Run [`bridge-season-close.sql`](bridge-season-close.sql) with wrangler. It
+   copies the final standings and group standings into the archive tables
+   (role counts from Season 1 hands only), marks Season 1 closed and Season 2
+   active. It deletes and resets nothing and can be rerun.
+4. Check `/api/leaderboard?season=1` and the archive row counts.
 
 Never use `0006_stats_reset.sql` for a season change: it deletes history.
 
 ## Next steps
 
-1. `0013` was applied to production on 2026-11-04 (see
-   [deployment](deployment.md)); the trial starts when this code is live.
+1. Apply `0014` before 1 December and close Season 1 afterwards (above).
 2. Let the trial run, then review the queries above, especially
    `partner-gap`, `prediction-accuracy` and `solo-contracts`.
 3. Post-game deal insight (for example "your side held 24 of 40 high-card
    points") using the recorded features. Display only, not rating.
-4. Decide the leaver policy formally, the solo formula and bot benchmarking,
-   then the Season 2 start options.
+4. Agree a solo formula and benchmark bot strength so those hands can be rated.

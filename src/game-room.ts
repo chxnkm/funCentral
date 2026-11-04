@@ -4,13 +4,14 @@ import { NUM_PLAYERS, MAX_BID, CARD_SUITS, BID_SUITS } from './types';
 import { generateHands, getBidFromNum, getNumFromBid, getValidSuits, compareCards, getNumFromValue } from './bridge';
 import { getGodBotBid, getGodBotPartnerCard, getGodBotCard } from './god-bot';
 import type { ClientMessage, ServerMessage } from './protocol';
-import { getUser } from './db';
+import { getSeasonStanding } from './season-db';
+import { bridgeNow, isLegacySeasonId, seasonAt, seasonById, skillSystemFor } from './seasons';
 import { sendMessage, isChatMember } from './telegram';
 import { persistRatedResult } from './stats-db';
 import { insertGameHands, persistGameLog } from './game-logging';
 import { settleBetsAndUpdateElo } from './betting-db';
 import { buildCompletion, completionDone, completionMessage, effectiveTelegramId, type BridgeCompletion, type CompletionOutcome, type RatingSnapshot } from './bridge-completion';
-import { isMissingTableError, persistShadow, readRatingSnapshot } from './rating-db';
+import { isMissingTableError, persistSeasonResult, persistShadow, readRatingSnapshot } from './rating-db';
 import { CHAT_HISTORY_KEY, createChatHistory, readChatHistory, appendRoomMessage } from './chat-history';
 import { normalizePlayerName, repairRoomNames } from './player-name';
 
@@ -493,7 +494,9 @@ export class GameRoom extends DurableObject {
     let ok = true;
     if (!c.steps.rated) {
       try {
-        c.legacy = (await persistRatedResult(env.DB, c)).elo;
+        // Season 1 hands keep the legacy Elo; later seasons rate with their own system.
+        if (isLegacySeasonId(c.seasonId)) c.legacy = (await persistRatedResult(env.DB, c)).elo;
+        else c.seasonChanges = await persistSeasonResult(env.DB, c, seasonById(c.seasonId)!.ratingSystem);
         c.steps.rated = true;
       } catch (err) {
         ok = false;
@@ -554,9 +557,10 @@ export class GameRoom extends DurableObject {
   }
 
   /** Reads the dealt hand's starting ratings and stores them beside the room state. */
-  private async captureRatingSnapshot(gameId: string, seats: { telegramId: number | null }[]): Promise<void> {
+  private async captureRatingSnapshot(gameId: string, seats: { telegramId: number | null }[], seasonId: number): Promise<void> {
     try {
-      const snapshot = await readRatingSnapshot((this.env as Env).DB, gameId, seats);
+      const season = seasonById(seasonId) ?? seasonAt(Date.now());
+      const snapshot = await readRatingSnapshot((this.env as Env).DB, gameId, seats, { system: skillSystemFor(season), seasonId: season.id });
       const state = await this.getState();
       if (state?.gameId === gameId) await this.ctx.storage.put(SNAPSHOT_KEY, snapshot);
     } catch (err) {
@@ -682,11 +686,13 @@ export class GameRoom extends DurableObject {
   private async refreshPlayerStats(player: import('./types').Player, playerId: string): Promise<void> {
     if (!playerId.startsWith('tg_')) return;
     const telegramId = Number(playerId.slice(3));
-    const userRow = await getUser((this.env as Env).DB, telegramId).catch(() => null);
-    if (userRow && userRow.games_played > 0) {
-      player.wins = userRow.wins;
-      player.gamesPlayed = userRow.games_played;
-      player.elo = userRow.elo;
+    // The current season's standing: legacy Elo in Season 1, the season rating after.
+    const season = seasonAt(bridgeNow(this.env as Env));
+    const standing = await getSeasonStanding((this.env as Env).DB, season, telegramId).catch(() => null);
+    if (standing) {
+      player.wins = standing.wins;
+      player.gamesPlayed = standing.gamesPlayed;
+      player.elo = standing.elo;
     } else {
       player.wins = undefined;
       player.gamesPlayed = undefined;
@@ -2616,6 +2622,8 @@ export class GameRoom extends DurableObject {
     // A bot still covering a player who left an earlier hand is a bot for this hand:
     // the absent player is not rated for it (they can still reclaim the seat).
     state.dealtBotSeats = state.players.filter((p) => p.isBot).map((p) => p.seat);
+    // The hand counts for the season it is dealt in, even if it ends after a boundary.
+    state.seasonId = seasonAt(bridgeNow(this.env as Env)).id;
     state.initialHands = state.hands.map((h) => ({
       '♣': [...h['♣']],
       '♦': [...h['♦']],
@@ -2630,6 +2638,7 @@ export class GameRoom extends DurableObject {
     this.ctx.waitUntil(this.captureRatingSnapshot(
       state.gameId,
       state.players.map((p) => ({ telegramId: p.isBot ? null : effectiveTelegramId(p) })),
+      state.seasonId,
     ));
     this.broadcast({ type: 'gameStart', turn: state.firstBidder });
     this.broadcastFullState(state);

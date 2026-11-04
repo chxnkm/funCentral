@@ -194,7 +194,7 @@ describe('Bridge hand completion persistence', () => {
   });
 
   it('still records legacy stats when the rating tables have not been migrated', async () => {
-    harness = await createBridgeHarness({ skipMigrations: ['0013_bridge_rating_foundation.sql'] });
+    harness = await createBridgeHarness({ skipMigrations: ['0013_bridge_rating_foundation.sql', '0014_bridge_season_2.sql'] });
     const { room, ws } = await playLastCard('NOTABLES');
     const after = await waitFor(() => readRoom(room), (r) => r.state.phase === 'gameover' && r.completions.length === 0);
     ws.close();

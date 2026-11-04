@@ -88,6 +88,7 @@ export interface GameState {
   redealCount?: number; // all-pass redeals before this hand's bidding succeeded
   replacedSeats?: number[]; // seats a bot took over during this hand, even if the human later returned
   dealtBotSeats?: number[]; // seats held by a bot when this hand was dealt; they credit no human
+  seasonId?: number; // Bridge season the hand was dealt in (src/seasons.ts); absent = Season 1
   abandonVote?: {
     initiatorSeat: number;
     initiatorId: string;
@@ -145,6 +146,7 @@ export interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_BOT_USERNAME: string;
   ALLOW_DEV_LOGIN?: string;
+  TEST_NOW_MS?: string; // local tests only: pins the Bridge season clock (ignored without ALLOW_DEV_LOGIN)
 }
 
 export const NUM_PLAYERS = 4;

@@ -1,9 +1,11 @@
 import type { Env } from './types';
 import { verifyTelegramAuth, signJwt, verifyJwt } from './auth';
-import { upsertUser, getUser, updateDisplayName, getLeaderboard, upsertGroup, getGroupLeaderboard } from './db';
+import { upsertUser, getUser, updateDisplayName, upsertGroup } from './db';
 import { sendMessage, parseUpdate, parseGameSelection, sendGameMenu, answerGameSelection, setBotCommands, escapeHtml, type TelegramCommand } from './telegram';
 import { GAME_CATALOG } from './games';
-import { getPlayerStats, getPairStats } from './stats-db';
+import { getPlayerStats, getPairStats, type StatsSeasonScope } from './stats-db';
+import { getHandRatingChanges, getSeasonGroupLeaderboard, getSeasonLeaderboard } from './season-db';
+import { bridgeNow, resolveSeason, seasonAt, startedSeasons, usesLegacyElo, type BridgeSeason } from './seasons';
 import { placeBet, getUserBet, getBettingLeaderboard } from './betting-db';
 import { listUserGames, getGameReplay } from './history';
 import { normalizePlayerName, telegramDisplayName, UNNAMED_TELEGRAM_USER } from './player-name';
@@ -46,6 +48,24 @@ async function createTaiDiRoom(env: Env, extra: Record<string, unknown> = {}): P
 }
 
 const MEDALS = ['🥇', '🥈', '🥉'];
+
+/** Which Bridge season a response covers, and the seasons a client can switch to (newest first). */
+function seasonInfo(season: BridgeSeason, now: number) {
+  const current = seasonAt(now);
+  return {
+    season: { id: season.id, name: season.name, current: season.id === current.id },
+    seasons: startedSeasons(now).map((s) => ({ id: s.id, name: s.name, current: s.id === current.id })),
+  };
+}
+
+/** Stats scope for a Bridge season: later seasons read their own hands and rating. */
+function statsScope(season: BridgeSeason, now: number): StatsSeasonScope {
+  return {
+    seasonId: season.id,
+    ratingSystem: usesLegacyElo(season) ? null : season.ratingSystem,
+    excludeLaterSeasons: usesLegacyElo(season) && startedSeasons(now).length > 1,
+  };
+}
 const HELP_TEXT = [
   '🎪 <b>funCentral</b> — card games for this group',
   '',
@@ -94,9 +114,10 @@ async function handleTelegramCommand(cmd: TelegramCommand, env: Env, origin: str
       return;
     }
     case 'leaderboard': {
+      const bridgeSeason = seasonAt(bridgeNow(env));
       // A missing/broken Regicide or Tai Di table must never take the Bridge board down with it.
       const [bridge, regicide, taidi] = await Promise.all([
-        getGroupLeaderboard(env.DB, cmd.chatId),
+        getSeasonGroupLeaderboard(env.DB, bridgeSeason, cmd.chatId),
         getRegicideGroupLeaderboard(env.DB, cmd.chatId).catch((err) => { console.error('Regicide group board unavailable', err); return []; }),
         getTaiDiGroupLeaderboard(env.DB, cmd.chatId).catch((err) => { console.error('Tai Di group board unavailable', err); return []; }),
       ]);
@@ -106,7 +127,7 @@ async function handleTelegramCommand(cmd: TelegramCommand, env: Env, origin: str
       }
       const rank = (i: number) => MEDALS[i] ?? `${i + 1}.`;
       const bridgeRows = bridge.top.length
-        ? bridge.top.map((e) => `${MEDALS[e.rank - 1] ?? `${e.rank}.`} ${escapeHtml(e.displayName)} — ELO ${e.elo} (${e.wins}W / ${e.gamesPlayed}G)`).join('\n')
+        ? bridge.top.map((e) => `${MEDALS[e.rank - 1] ?? `${e.rank}.`} ${escapeHtml(e.displayName)} — ${usesLegacyElo(bridgeSeason) ? 'ELO' : 'Rating'} ${e.elo} (${e.wins}W / ${e.gamesPlayed}G${e.provisional ? ', provisional' : ''})`).join('\n')
         : '<i>No games yet — /newbridge</i>';
       const regicideRows = regicide.length
         ? regicide.map((e, i) => `${rank(i)} ${escapeHtml(e.displayName)} — ${e.rating} (best ${e.bestDefeated}/12, ${e.gamesPlayed}G)`).join('\n')
@@ -114,7 +135,9 @@ async function handleTelegramCommand(cmd: TelegramCommand, env: Env, origin: str
       const taidiRows = taidi.length
         ? taidi.map((e, i) => `${rank(i)} ${escapeHtml(e.displayName)} — ${e.rating} (${e.wins}W / ${e.gamesPlayed}G)`).join('\n')
         : '<i>No games yet — /newtaidi</i>';
-      await sendMessage(token, cmd.chatId, `🏆 <b>Group Leaderboard</b>\n\n🃏 <b>Bridge</b>\n${bridgeRows}\n\n♛ <b>Regicide</b>\n${regicideRows}\n\n🎴 <b>Tai Di</b>\n${taidiRows}`);
+      // Name the season only once there is more than one.
+      const bridgeTitle = startedSeasons(bridgeNow(env)).length > 1 ? `Bridge · ${bridgeSeason.name}` : 'Bridge';
+      await sendMessage(token, cmd.chatId, `🏆 <b>Group Leaderboard</b>\n\n🃏 <b>${bridgeTitle}</b>\n${bridgeRows}\n\n♛ <b>Regicide</b>\n${regicideRows}\n\n🎴 <b>Tai Di</b>\n${taidiRows}`);
       return;
     }
     case 'help':
@@ -207,14 +230,18 @@ export default {
       const claims = await getAuthClaims(request, env.JWT_SECRET).catch(() => null);
       const telegramId = claims ? Number(claims.sub) : undefined;
       const groupId = url.searchParams.get('groupId');
+      // Current season by default; ?season=N shows another season that has started.
+      const now = bridgeNow(env);
+      const season = resolveSeason(url.searchParams.get('season'), now);
+      const data = groupId
+        ? await getSeasonGroupLeaderboard(env.DB, season, groupId, telegramId)
+        : await getSeasonLeaderboard(env.DB, season, telegramId);
+      return Response.json({ ...data, ...seasonInfo(season, now) });
+    }
 
-      if (groupId) {
-        const data = await getGroupLeaderboard(env.DB, groupId, telegramId);
-        return Response.json(data);
-      }
-
-      const data = await getLeaderboard(env.DB, telegramId);
-      return Response.json(data);
+    if (url.pathname === '/api/bridge/seasons' && request.method === 'GET') {
+      const now = bridgeNow(env);
+      return Response.json(seasonInfo(seasonAt(now), now));
     }
 
     if (url.pathname === '/api/create' && request.method === 'POST') {
@@ -390,22 +417,7 @@ export default {
     if (url.pathname === '/api/elo-deltas' && request.method === 'GET') {
       const gameId = url.searchParams.get('gameId');
       if (!gameId) return Response.json([], { status: 200 });
-      const rows = await env.DB
-        .prepare(
-          `SELECT u.display_name, eh.delta, eh.elo_before, eh.elo_after
-           FROM elo_history eh
-           JOIN users u ON u.telegram_id = eh.telegram_id
-           WHERE eh.game_id = ?`,
-        )
-        .bind(gameId)
-        .all<{ display_name: string; delta: number; elo_before: number; elo_after: number }>();
-      const result = (rows.results ?? []).map((r) => ({
-        name: r.display_name,
-        delta: r.delta,
-        eloBefore: r.elo_before,
-        eloAfter: r.elo_after,
-      }));
-      return Response.json(result);
+      return Response.json(await getHandRatingChanges(env.DB, gameId));
     }
 
     if (url.pathname === '/api/play-time-today' && request.method === 'GET') {
@@ -446,13 +458,15 @@ export default {
 
     if (url.pathname === '/api/stats' && request.method === 'GET') {
       const groupId = url.searchParams.get('groupId') ?? undefined;
-      const data = await getPlayerStats(env.DB, groupId);
+      const now = bridgeNow(env);
+      const data = await getPlayerStats(env.DB, groupId, statsScope(resolveSeason(url.searchParams.get('season'), now), now));
       return Response.json(data);
     }
 
     if (url.pathname === '/api/stats/pairs' && request.method === 'GET') {
       const groupId = url.searchParams.get('groupId') ?? undefined;
-      const data = await getPairStats(env.DB, groupId);
+      const now = bridgeNow(env);
+      const data = await getPairStats(env.DB, groupId, statsScope(resolveSeason(url.searchParams.get('season'), now), now));
       return Response.json(data);
     }
 

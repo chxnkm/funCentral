@@ -8,7 +8,7 @@ import path from 'node:path';
 
 export { Response };
 
-export async function createBridgeHarness({ skipMigrations = [] as string[] } = {}) {
+export async function createBridgeHarness({ skipMigrations = [] as string[], bindings = {} as Record<string, string> } = {}) {
   const root = path.resolve(import.meta.dirname, '..');
   const state = await mkdtemp(path.join(tmpdir(), 'bridge-persistence-'));
   const telegram: { chat_id: string; text: string }[] = [];
@@ -56,7 +56,7 @@ export async function createBridgeHarness({ skipMigrations = [] as string[] } = 
       durableObjects: { ROOM: { className: 'TestRoom', useSQLite: true } },
       resourcePersistencePath: state,
       d1Databases: ['DB'],
-      bindings: { TELEGRAM_BOT_TOKEN: 'local-test-token' },
+      bindings: { TELEGRAM_BOT_TOKEN: 'local-test-token', ...bindings },
       outboundService: async (request: Request) => {
         if (new URL(request.url).pathname.endsWith('/sendMessage')) telegram.push(await request.json() as { chat_id: string; text: string });
         return Response.json({ ok: true, result: { status: 'member' } });

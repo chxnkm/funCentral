@@ -14,8 +14,11 @@ import {
   bidderTricks,
   ratedTelegramId,
   type BridgeCompletion,
+  type LegacyEloRow,
   type RatingSnapshot,
 } from './bridge-completion';
+import { gameRecordRows, gameRecordsStatement } from './stats-db';
+import { getWinnerSeats } from './stats';
 
 /** True when a query failed because migration 0013 has not been applied yet. */
 export function isMissingTableError(err: unknown): boolean {
@@ -23,14 +26,15 @@ export function isMissingTableError(err: unknown): boolean {
 }
 
 /**
- * Reads every seated human's legacy Elo and shadow skill rating when a hand is
- * dealt. Never throws: unavailable parts are null, and the shadow rating then
- * records the hand without applying it.
+ * Reads every seated human's legacy Elo and skill rating (from `system`) when a
+ * hand is dealt. Never throws: unavailable parts are null, and the hand is then
+ * recorded without applying a rating (or rated at completion, in a season).
  */
 export async function readRatingSnapshot(
   db: D1Database,
   gameId: string,
   seats: { telegramId: number | null }[],
+  { system, seasonId }: { system: string; seasonId: number },
   now = Date.now(),
 ): Promise<RatingSnapshot> {
   const ids = [...new Set(seats.map((s) => s.telegramId).filter((id): id is number => id !== null))];
@@ -38,7 +42,6 @@ export async function readRatingSnapshot(
 
   let legacy: Map<number, { elo: number; games_played: number }> | null = null;
   let skill: Map<number, { rating: number; games: number }> | null = null;
-  let seasonId: number | null = null;
   if (ids.length > 0) {
     legacy = await db
       .prepare(`SELECT telegram_id, elo, games_played FROM users WHERE telegram_id IN (${placeholders})`)
@@ -48,16 +51,11 @@ export async function readRatingSnapshot(
       .catch(() => null);
     skill = await db
       .prepare(`SELECT telegram_id, rating, games FROM bridge_ratings WHERE system = ? AND telegram_id IN (${placeholders})`)
-      .bind(SKILL_SYSTEM, ...ids)
+      .bind(system, ...ids)
       .all<{ telegram_id: number; rating: number; games: number }>()
       .then((r) => new Map((r.results ?? []).map((row) => [row.telegram_id, row])))
       .catch(() => null);
   }
-  seasonId = await db
-    .prepare("SELECT season_id FROM bridge_seasons WHERE status = 'active' LIMIT 1")
-    .first<{ season_id: number }>()
-    .then((r) => r?.season_id ?? null)
-    .catch(() => null);
 
   return {
     gameId,
@@ -95,25 +93,38 @@ function skillSeats(c: BridgeCompletion): SkillSeat[] {
   });
 }
 
+function evaluate(c: BridgeCompletion, official: boolean): SkillGameResult | null {
+  if (c.kind !== 'completed') return null;
+  return evaluateSkillGame({
+    bidder: c.bidder,
+    partner: c.partner,
+    bidderWon: c.bidderWon === true,
+    isPractice: c.isPractice,
+    seats: skillSeats(c),
+    replacementIsRated: official,
+  });
+}
+
 /**
- * Records a hand for the rating trial, in one D1 transaction: starting-hand
- * features for every seat, the shadow skill-rating evaluation per human next to
- * their legacy Elo change, the shadow rating update when the hand qualifies, and
- * a ledger row. The ledger row is written last and guards the rating update, so
- * repeating this call is a no-op. Throws "no such table" until migration 0013.
+ * One transaction's statements for a hand's skill rating: the rating update when
+ * the hand qualifies, a rating event per human, and in an official season the
+ * hand's game_records rows and group statistics; then starting-hand features and
+ * a ledger row. The ledger row is written last and guards every write before it,
+ * so repeating the transaction is a no-op.
  */
-export async function persistShadow(db: D1Database, c: BridgeCompletion): Promise<void> {
+function skillRatingStatements(
+  db: D1Database,
+  c: BridgeCompletion,
+  evaluation: SkillGameResult | null,
+  { system, official }: { system: string; official: boolean },
+): D1PreparedStatement[] {
   const playedAt = Math.floor(c.completedAt / 1000);
   const completed = c.kind === 'completed';
   const partnerKnown = c.bidder >= 0 && c.partner >= 0;
   const bidderSide = partnerKnown ? bidderSideSeats(c.bidder, c.partner) : [];
-  const evaluation: SkillGameResult | null = completed
-    ? evaluateSkillGame({
-      bidder: c.bidder, partner: c.partner, bidderWon: c.bidderWon === true, isPractice: c.isPractice, seats: skillSeats(c),
-    })
-    : null;
 
-  const legacyById = new Map((c.legacy ?? []).map((r) => [r.telegramId, r]));
+  // The trial compares itself with the legacy Elo change on the same hand.
+  const legacyById = new Map((official ? [] : c.legacy ?? []).map((r) => [r.telegramId, r]));
   const legacyBefore = (onBidderSide: boolean) => c.players
     .filter((p) => bidderSide.includes(p.seat) === onBidderSide)
     .map((p) => legacyById.get(ratedTelegramId(p) ?? NaN)?.eloBefore)
@@ -137,7 +148,7 @@ export async function persistShadow(db: D1Database, c: BridgeCompletion): Promis
              wins = wins + excluded.wins,
              updated_at = excluded.updated_at`,
         )
-        .bind(SKILL_SYSTEM, p.telegramId, SKILL_START_RATING + p.delta!, p.score, playedAt, c.gameId, p.delta!));
+        .bind(system, p.telegramId, SKILL_START_RATING + p.delta!, p.score, playedAt, c.gameId, p.delta!));
     }
   }
 
@@ -153,10 +164,32 @@ export async function persistShadow(db: D1Database, c: BridgeCompletion): Promis
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
-          SKILL_SYSTEM, c.gameId, p.telegramId, p.seat, p.role, evaluation.applied ? 1 : 0, evaluation.reason,
+          system, c.gameId, p.telegramId, p.seat, p.role, evaluation.applied ? 1 : 0, evaluation.reason,
           p.ratingBefore, p.gamesBefore, p.k, p.teamRating, p.oppRating, p.expected, p.score, p.delta, p.ratingAfter,
           legacy?.eloBefore ?? null, legacy?.delta ?? null, playedAt,
         ));
+    }
+  }
+
+  // In a season, rated hands also feed the stats screen and the group boards.
+  if (official && evaluation?.applied) {
+    const winnerSeats = getWinnerSeats(c.bidder, c.partner, c.bidderWon === true);
+    const rows = gameRecordRows(c.players.map((p) => ({ seat: p.seat, telegramId: ratedTelegramId(p) })), c.bidder, c.partner, c.sets, winnerSeats);
+    if (rows.length > 0) stmts.push(gameRecordsStatement(db, c, rows, NOT_LEDGERED));
+    if (c.groupId) {
+      for (const p of c.players) {
+        const telegramId = ratedTelegramId(p);
+        if (telegramId === null || !p.isGroupMember) continue;
+        stmts.push(db
+          .prepare(
+            `INSERT INTO bridge_season_group_stats (season_id, group_id, telegram_id, wins, games_played)
+             SELECT ?, ?, ?, ?, 1 WHERE ${NOT_LEDGERED}
+             ON CONFLICT(season_id, group_id, telegram_id) DO UPDATE SET
+               games_played = games_played + 1,
+               wins = wins + excluded.wins`,
+          )
+          .bind(c.seasonId, c.groupId, telegramId, winnerSeats.includes(p.seat) ? 1 : 0, c.gameId));
+      }
     }
   }
 
@@ -188,11 +221,11 @@ export async function persistShadow(db: D1Database, c: BridgeCompletion): Promis
           redeal_count, bidder_seat, partner_seat, bid_num, trump_suit, bidder_won, bidder_tricks, tricks_played,
           sets_needed, bidder_side_hcp, bidder_side_trumps, legacy_expected, skill_expected, skill_applied,
           skill_reason, dealt_at, completed_at)
-       VALUES (?, COALESCE(?, (SELECT season_id FROM bridge_seasons WHERE status = 'active' LIMIT 1)),
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
-      c.gameId, c.ratingSnapshot?.seasonId ?? null, c.roomCode, c.groupId, c.kind,
+      // Completions saved before seasons were assigned at deal carry the snapshot's season.
+      c.gameId, c.seasonId ?? c.ratingSnapshot?.seasonId ?? 1, c.roomCode, c.groupId, c.kind,
       c.isPractice ? 1 : 0,
       c.players.some((p) => p.dealtAsBot) ? 1 : 0,
       c.players.some((p) => p.replaced) ? 1 : 0,
@@ -216,5 +249,45 @@ export async function persistShadow(db: D1Database, c: BridgeCompletion): Promis
       playedAt,
     ));
 
-  await db.batch(stmts);
+  return stmts;
+}
+
+/**
+ * Records a Season 1 hand for the rating trial in one D1 transaction: deal
+ * features, the shadow skill-rating evaluation per human next to their legacy
+ * Elo change, the shadow rating update when the hand qualifies, and a ledger
+ * row. Repeating it is a no-op. Throws "no such table" until migration 0013.
+ */
+export async function persistShadow(db: D1Database, c: BridgeCompletion): Promise<void> {
+  await db.batch(skillRatingStatements(db, c, evaluate(c, false), { system: SKILL_SYSTEM, official: false }));
+}
+
+/**
+ * Rates a hand dealt in a skill-rated season (Season 2 on) in one D1
+ * transaction: the season rating, rating events, game_records, season group
+ * statistics, deal features and the ledger. A player who left mid-hand still
+ * takes the result. If no starting ratings were captured at the deal, the
+ * current ratings are read now (and kept on the completion for retries); a hand
+ * is never left unrated because a read failed, so that throws and is retried.
+ * Returns the season rating changes as stored, rounded as shown to players.
+ */
+export async function persistSeasonResult(db: D1Database, c: BridgeCompletion, system: string): Promise<LegacyEloRow[]> {
+  if (c.kind === 'completed' && !c.isPractice && !c.ratingSnapshot) {
+    c.ratingSnapshot = await readRatingSnapshot(
+      db, c.gameId, c.players.map((p) => ({ telegramId: ratedTelegramId(p) })), { system, seasonId: c.seasonId },
+    );
+  }
+  const evaluation = evaluate(c, true);
+  if (evaluation?.reason === 'no-snapshot') throw new Error(`Season ratings unavailable for hand ${c.gameId}`);
+  await db.batch(skillRatingStatements(db, c, evaluation, { system, official: true }));
+
+  const stored = await db
+    .prepare('SELECT telegram_id, rating_before, rating_after FROM bridge_rating_events WHERE system = ? AND game_id = ? AND applied = 1 ORDER BY seat')
+    .bind(system, c.gameId)
+    .all<{ telegram_id: number; rating_before: number; rating_after: number }>();
+  return (stored.results ?? []).map((r) => {
+    const eloBefore = Math.round(r.rating_before);
+    const eloAfter = Math.round(r.rating_after);
+    return { telegramId: r.telegram_id, eloBefore, eloAfter, delta: eloAfter - eloBefore };
+  });
 }

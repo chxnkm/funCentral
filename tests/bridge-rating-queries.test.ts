@@ -7,7 +7,8 @@ import { createBridgeHarness } from './bridge-persistence-harness';
 import { buildCompletion, type RatingSnapshot } from '../src/bridge-completion';
 import { persistRatedResult } from '../src/stats-db';
 import { persistGameLog } from '../src/game-logging';
-import { persistShadow } from '../src/rating-db';
+import { persistSeasonResult, persistShadow } from '../src/rating-db';
+import { BRIDGE_SEASONS } from '../src/seasons';
 import { finishedState } from './bridge-fixtures';
 
 function blocks(file: string): [string, string][] {
@@ -55,7 +56,10 @@ describe('documented Bridge rating queries', () => {
 });
 
 describe('Season 1 close runbook', () => {
-  it('archives standings without changing live ratings, and can be rerun', async () => {
+  it('archives Season 1 standings without changing live ratings, hands over to Season 2, and can be rerun', async () => {
+    // A Season 2 hand for the same players must not count in the Season 1 archive.
+    const season2 = buildCompletion(finishedState({ gameId: 'season-2-hand', seasonId: 2 }), { kind: 'completed', bidderWon: true }, null);
+    await persistSeasonResult(harness.db, season2, 'season-2');
     const before = await harness.db.prepare('SELECT telegram_id, elo, wins, games_played FROM users ORDER BY telegram_id').all();
     for (let run = 0; run < 2; run++) {
       for (const [, statement] of blocks('docs/bridge-season-close.sql')) await harness.db.prepare(statement).run();
@@ -68,7 +72,10 @@ describe('Season 1 close runbook', () => {
       { telegram_id: 104, rank: 3, rating: 984, games: 1, wins: 0, bidder_games: 0, bidder_wins: 0, partner_games: 0, opposition_games: 1 },
     ]);
     expect(await harness.db.prepare('SELECT COUNT(*) AS n FROM bridge_season_group_standings').first()).toEqual({ n: 4 });
-    expect(await harness.db.prepare('SELECT status FROM bridge_seasons WHERE season_id = 1').first()).toEqual({ status: 'closed' });
+    expect((await harness.db.prepare('SELECT season_id, status, ended_at FROM bridge_seasons ORDER BY season_id').all()).results).toEqual([
+      { season_id: 1, status: 'closed', ended_at: BRIDGE_SEASONS[1].startsAt / 1000 },
+      { season_id: 2, status: 'active', ended_at: null },
+    ]);
     expect((await harness.db.prepare('SELECT telegram_id, elo, wins, games_played FROM users ORDER BY telegram_id').all()).results).toEqual(before.results);
   });
 });

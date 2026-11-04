@@ -117,6 +117,15 @@ tables, Season 1 seeded from the first rated hand, no pending migrations).
 Time Travel bookmark before the change:
 `000007bb-00000000-00005119-6a5364c238f6aa3a54cc2707f7ef028a`.
 
+### Bridge Season 2 (`0014`)
+
+`0014_bridge_season_2.sql` adds the Season 2 row (`season-2`, starting
+2026-12-01 00:00 SGT, status `planned`) and `bridge_season_group_stats`. It
+is additive and depends on `0013`. Code before the Season 2 change ignores
+both; the Season 2 code needs them from the start time (until then it reads
+only Season 1 data). Apply it before 1 December 2026. The season-close
+runbook later marks Season 1 closed and Season 2 active.
+
 The Season 1 close (`docs/bridge-season-close.sql`) is **not** a migration.
 It is a separate, scheduled step in the [Bridge rating](bridge-rating.md)
 runbook.

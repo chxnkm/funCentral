@@ -1,6 +1,7 @@
 import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
 import { BID_SUITS } from './types';
 import { computeEloDeltas } from './elo';
+import { SKILL_START_RATING } from './skill-rating';
 import type { EloPlayer } from './elo';
 import { getWinnerSeats } from './stats';
 import { ratedTelegramId, type BridgeCompletion, type LegacyEloRow } from './bridge-completion';
@@ -94,14 +95,42 @@ function pct(wins: number, games: number): number {
   return games === 0 ? 0 : Math.round((wins / games) * 1000) / 10;
 }
 
-export async function getPlayerStats(db: D1Database, groupId?: string): Promise<PlayerStatRow[]> {
-  const where = groupId ? 'WHERE gr.group_id = ?' : '';
-  const bindings: string[] = groupId ? [groupId] : [];
+/**
+ * Which hands a stats query covers. Omitted: every rated hand, as before seasons.
+ * Season 1 reads users.elo; later seasons read their hands from the ledger and
+ * their own rating.
+ */
+export interface StatsSeasonScope {
+  seasonId: number;
+  /** bridge_ratings.system for a skill-rated season; null for Season 1 (users.elo). */
+  ratingSystem: string | null;
+  /** Season 1 once a later season has started: leave out the later seasons' hands. */
+  excludeLaterSeasons: boolean;
+}
+
+function seasonCondition(scope: StatsSeasonScope | undefined, gameIdColumn: string): { sql: string; binds: number[] } | null {
+  if (!scope) return null;
+  if (scope.ratingSystem) return { sql: `${gameIdColumn} IN (SELECT game_id FROM bridge_game_ledger WHERE season_id = ?)`, binds: [scope.seasonId] };
+  if (scope.excludeLaterSeasons) return { sql: `${gameIdColumn} NOT IN (SELECT game_id FROM bridge_game_ledger WHERE season_id > ?)`, binds: [scope.seasonId] };
+  return null;
+}
+
+export async function getPlayerStats(db: D1Database, groupId?: string, scope?: StatsSeasonScope): Promise<PlayerStatRow[]> {
+  const conditions: string[] = [];
+  const bindings: (string | number)[] = [];
+  if (groupId) { conditions.push('gr.group_id = ?'); bindings.push(groupId); }
+  const season = seasonCondition(scope, 'gr.game_id');
+  if (season) { conditions.push(season.sql); bindings.push(...season.binds); }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  // A skill-rated season shows its own (rounded) rating in the ELO column.
+  const seasonRating = scope?.ratingSystem ?? null;
+  const ratingJoin = seasonRating ? 'LEFT JOIN bridge_ratings br ON br.telegram_id = gr.telegram_id AND br.system = ?' : '';
+  const eloColumn = seasonRating ? `CAST(ROUND(COALESCE(br.rating, ${SKILL_START_RATING})) AS INTEGER) AS elo` : 'u.elo';
 
   const main = await db
     .prepare(
       `SELECT
-         u.telegram_id, u.display_name, u.elo,
+         u.telegram_id, u.display_name, ${eloColumn},
          COUNT(*) as games,
          SUM(gr.won) as wins,
          ROUND(100.0 * SUM(gr.won) / COUNT(*), 1) as win_pct,
@@ -113,11 +142,12 @@ export async function getPlayerStats(db: D1Database, groupId?: string): Promise<
          SUM(CASE WHEN gr.role = 'opposition' AND gr.won = 1 THEN 1 ELSE 0 END) as opp_wins
        FROM game_records gr
        JOIN users u ON u.telegram_id = gr.telegram_id
+       ${ratingJoin}
        ${where}
        GROUP BY gr.telegram_id
        ORDER BY win_pct DESC`,
     )
-    .bind(...bindings)
+    .bind(...(seasonRating ? [seasonRating] : []), ...bindings)
     .all<{
       telegram_id: number; display_name: string; elo: number;
       games: number; wins: number; win_pct: number;
@@ -126,16 +156,16 @@ export async function getPlayerStats(db: D1Database, groupId?: string): Promise<
       opp_games: number; opp_wins: number;
     }>();
 
-  const suitWhere = groupId ? "WHERE role = 'bidder' AND group_id = ?" : "WHERE role = 'bidder'";
+  const suitWhere = ["gr.role = 'bidder'", ...conditions].join(' AND ');
   const suits = await db
     .prepare(
       `SELECT telegram_id, bid_suit
        FROM (
-         SELECT telegram_id, bid_suit,
-                ROW_NUMBER() OVER (PARTITION BY telegram_id ORDER BY COUNT(*) DESC) as rn
-         FROM game_records
-         ${suitWhere}
-         GROUP BY telegram_id, bid_suit
+         SELECT gr.telegram_id, gr.bid_suit,
+                ROW_NUMBER() OVER (PARTITION BY gr.telegram_id ORDER BY COUNT(*) DESC) as rn
+         FROM game_records gr
+         WHERE ${suitWhere}
+         GROUP BY gr.telegram_id, gr.bid_suit
        )
        WHERE rn = 1`,
     )
@@ -158,9 +188,13 @@ export async function getPlayerStats(db: D1Database, groupId?: string): Promise<
   }));
 }
 
-export async function getPairStats(db: D1Database, groupId?: string): Promise<PairStatRow[]> {
-  const where = groupId ? 'WHERE gr1.group_id = ? AND gr2.group_id = ?' : '';
-  const bindings: string[] = groupId ? [groupId, groupId] : [];
+export async function getPairStats(db: D1Database, groupId?: string, scope?: StatsSeasonScope): Promise<PairStatRow[]> {
+  const conditions: string[] = [];
+  const bindings: (string | number)[] = [];
+  if (groupId) { conditions.push('gr1.group_id = ? AND gr2.group_id = ?'); bindings.push(groupId, groupId); }
+  const season = seasonCondition(scope, 'gr1.game_id');
+  if (season) { conditions.push(season.sql); bindings.push(...season.binds); }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const rows = await db
     .prepare(
@@ -250,22 +284,7 @@ export async function persistRatedResult(
     );
   }
 
-  if (rows.length > 0) {
-    const bidLevel = Math.floor(c.bid / 5) + 1;
-    const bidSuit = BID_SUITS[c.bid % 5];
-    stmts.push(db
-      .prepare(
-        `INSERT INTO game_records
-           (game_id, group_id, played_at, telegram_id, role, won, bid_level, bid_suit, tricks_won, partner_telegram_id)
-         SELECT v.column1, v.column2, v.column3, v.column4, v.column5, v.column6, v.column7, v.column8, v.column9, v.column10
-         FROM (VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}) AS v
-         WHERE ${NOT_RECORDED} AND EXISTS (SELECT 1 FROM users u WHERE u.telegram_id = v.column4)`,
-      )
-      .bind(
-        ...rows.flatMap((r) => [c.gameId, c.groupId, playedAt, r.telegramId, r.role, r.won, bidLevel, bidSuit, r.tricksWon, r.partnerTelegramId]),
-        c.gameId,
-      ));
-  }
+  if (rows.length > 0) stmts.push(gameRecordsStatement(db, c, rows, NOT_RECORDED));
 
   if (stmts.length === 0) return { applied: false, elo: [] };
   const results = await db.batch(stmts);
@@ -313,4 +332,27 @@ async function legacyEloChanges(
     const delta = deltas.get(p.telegramId) ?? 0;
     return { telegramId: p.telegramId, eloBefore: p.elo, eloAfter: p.elo + delta, delta };
   });
+}
+
+/**
+ * One multi-row game_records insert for a hand, skipped when `guard` (a
+ * `NOT EXISTS (… WHERE game_id = ?)` condition bound to the hand) fails and for
+ * players without a users row.
+ */
+export function gameRecordsStatement(db: D1Database, c: BridgeCompletion, rows: GameRecordRow[], guard: string): D1PreparedStatement {
+  const bidLevel = Math.floor(c.bid / 5) + 1;
+  const bidSuit = BID_SUITS[c.bid % 5];
+  const playedAt = Math.floor(c.completedAt / 1000);
+  return db
+    .prepare(
+      `INSERT INTO game_records
+         (game_id, group_id, played_at, telegram_id, role, won, bid_level, bid_suit, tricks_won, partner_telegram_id)
+       SELECT v.column1, v.column2, v.column3, v.column4, v.column5, v.column6, v.column7, v.column8, v.column9, v.column10
+       FROM (VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}) AS v
+       WHERE ${guard} AND EXISTS (SELECT 1 FROM users u WHERE u.telegram_id = v.column4)`,
+    )
+    .bind(
+      ...rows.flatMap((r) => [c.gameId, c.groupId, playedAt, r.telegramId, r.role, r.won, bidLevel, bidSuit, r.tricksWon, r.partnerTelegramId]),
+      c.gameId,
+    );
 }
