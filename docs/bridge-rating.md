@@ -197,8 +197,8 @@ query and rate solo hands once a fair 1-v-3 formula is agreed.
 ### Before 1 December
 
 1. Merge the foundation PR and the Season 2 PR.
-2. Apply `0014` through the controlled D1 workflow in
-   [deployment](deployment.md) (additive, any time before the start).
+2. `0014` was applied to production on 2026-11-04 (see
+   [deployment](deployment.md)); re-check `migrations list` before the start.
 3. Review the trial queries; tune `skill-v1` constants before the start if
    needed. Season 2 starts fresh, so nothing has to be migrated.
 4. Announce the date in the groups.
@@ -218,7 +218,7 @@ Never use `0006_stats_reset.sql` for a season change: it deletes history.
 
 ## Next steps
 
-1. Apply `0014` before 1 December and close Season 1 afterwards (above).
+1. Merge both PRs before 1 December and close Season 1 afterwards (above).
 2. Let the trial run, then review the queries above, especially
    `partner-gap`, `prediction-accuracy` and `solo-contracts`.
 3. Post-game deal insight (for example "your side held 24 of 40 high-card

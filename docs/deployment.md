@@ -126,6 +126,12 @@ both; the Season 2 code needs them from the start time (until then it reads
 only Season 1 data). Apply it before 1 December 2026. The season-close
 runbook later marks Season 1 closed and Season 2 active.
 
+Rollout checkpoint (historical): `0014` was applied to production on
+2026-11-04, ahead of the code, as the only pending migration, and verified
+(Season 2 row `planned` from 2026-11-30 16:00 UTC, the group table present,
+no pending migrations). Bookmark before the change:
+`000007be-00000000-00005119-b3c794481068eeb41042911c76dc9c0a`.
+
 The Season 1 close (`docs/bridge-season-close.sql`) is **not** a migration.
 It is a separate, scheduled step in the [Bridge rating](bridge-rating.md)
 runbook.
