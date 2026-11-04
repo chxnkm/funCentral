@@ -203,10 +203,11 @@ query and rate solo hands once a fair 1-v-3 formula is agreed.
    needed. Season 2 starts fresh, so nothing has to be migrated.
 4. Announce the date in the groups.
 
-### After 1 December: close Season 1
+### On 1 December, once Season 2 has started: close Season 1
 
-1. Wait until hands dealt before midnight have finished and no room has
-   pending completions (rooms keep them until persisted; a day is ample).
+1. Wait until hands dealt before midnight (SGT) have finished and their results
+   are persisted, usually within the hour. Pending results retry for up to
+   30 minutes between attempts, so allow some margin if D1 had errors.
 2. Note a D1 Time Travel bookmark.
 3. Run [`bridge-season-close.sql`](bridge-season-close.sql) with wrangler. It
    copies the final standings and group standings into the archive tables
