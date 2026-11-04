@@ -1,6 +1,6 @@
 /* funCentral hub — built on Bridge's /style.css tokens and components. Each game tile
    carries its game's own theme: Bridge indigo, Regicide castle navy and crimson, Tai Di
-   felt green and gold. */
+   felt green and gold, Connect 4 blue and red. */
 
 .hub-body {
   --hub-gold: #f5c451;
@@ -178,6 +178,7 @@
   .hub-cta .btn { flex: 1 1 100%; }
 }
 @media (max-width: 380px) {
+  .hub-hero-art .hub-fan { transform: scale(0.84); }
   .hub-greeting { max-width: 120px; }
 }
 

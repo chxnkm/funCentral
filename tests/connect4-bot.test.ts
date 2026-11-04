@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { newGame, ROWS, type Cell, type Connect4Game } from '../src/connect4/engine';
-import { findBotMove } from '../src/connect4/bot';
+import { BOT_DEPTH, findBotMove } from '../src/connect4/bot';
 
 /** Build a game with given per-column bottom-up discs (1 = seat 0, 2 = seat 1). */
 function gameWith(cols: number[][], currentSeat: number): Connect4Game {
@@ -15,6 +15,12 @@ function gameWith(cols: number[][], currentSeat: number): Connect4Game {
 }
 
 describe('connect4 bot', () => {
+  it('defaults to a casual two-ply search', () => {
+    expect(BOT_DEPTH).toBe(2);
+    const game = gameWith([[1, 2], [2, 1], [], [1], [2, 1, 1], [], [2]], 0);
+    expect(findBotMove(game, 0)).toBe(findBotMove(game, 0, 2));
+  });
+
   it('returns null when it is not your turn or the game is over', () => {
     const g = newGame();
     expect(findBotMove(g, 1)).toBeNull();

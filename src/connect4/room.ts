@@ -10,6 +10,7 @@ export { MAX_PLAYERS };
 const INACTIVITY_MS = 30 * 60 * 1000;
 const RATING_RETRY_MS = 60 * 1000;
 const BOT_DELAY_MS = 700;
+const OPENING_REVEAL_MS = 2200;
 const VIEW_LOG = 20;
 
 interface RoomPlayer {
@@ -22,6 +23,8 @@ interface RoomPlayer {
   isGroupMember?: boolean;
   /** True for the practice opponent; bot games are not rated. */
   isBot?: boolean;
+  /** Index into this seat's three cosmetic colour options; absent in older rooms. */
+  colour?: number;
 }
 
 interface SeatRating {
@@ -51,6 +54,10 @@ interface RoomState {
   hostId: string | null;
   game: Connect4Game | null;
   gameNo: number;
+  /** Picked randomly for the first game, then alternated and persisted per room. */
+  nextStartingSeat?: number;
+  /** No disc may be dropped until the shared opening-border reveal finishes. */
+  openingUntil?: number | null;
   gameId: string | null;
   /** Rating result of the most recent rated game. */
   lastRating: { gameId: string; changes: SeatRating[] } | null;
@@ -86,6 +93,7 @@ export type Connect4ClientMessage =
   | { type: 'backToLobby' }
   | { type: 'kick'; playerId: string }
   | { type: 'addBot' }
+  | { type: 'setColour'; colour: number }
   | { type: 'leave' };
 
 export class Connect4Room extends DurableObject {
@@ -291,20 +299,30 @@ export class Connect4Room extends DurableObject {
         state.hostId ??= playerId;
         return null;
       }
+      case 'setColour': {
+        if (seat < 0) return 'Take a seat to choose your disc colour';
+        if (game) return 'Disc colours can only be changed in the lobby';
+        if (!Number.isInteger(msg.colour) || msg.colour < 0 || msg.colour >= 3) return 'Choose one of your three disc colours';
+        state.players[seat].colour = msg.colour;
+        return null;
+      }
       case 'start': {
         if (!isHost) return 'Only the host can start the game';
         if (game) return 'The game has already started';
         if (state.players.length < MIN_PLAYERS) return `Need ${MIN_PLAYERS} players to play Connect 4`;
+        const startingSeat = state.nextStartingSeat ?? (crypto.getRandomValues(new Uint8Array(1))[0] & 1);
         state.game = newGame();
+        state.game.currentSeat = startingSeat;
+        state.openingUntil = Date.now() + OPENING_REVEAL_MS;
+        state.nextStartingSeat = 1 - startingSeat;
         state.gameNo++;
         state.gameId = `${state.roomCode}-${Date.now().toString(36)}-${state.gameNo}`;
         return null;
       }
       case 'backToLobby': {
         if (!game) return null;
-        if (game.phase !== 'done' && !isHost) return 'Only the host can end the game early';
-        if (seat < 0) return null;
-        // A game ended early is not rated: nobody finished, so there is no result.
+        if (seat < 0) return "You're watching this game";
+        if (game.phase !== 'done') return 'Finish the round before returning to the lobby';
         state.game = null;
         return null;
       }
@@ -313,7 +331,10 @@ export class Connect4Room extends DurableObject {
     if (!game) return 'The game has not started';
     if (seat < 0) return "You're watching this game";
     switch (msg.type) {
-      case 'drop': return dropDisc(game, seat, asCol(msg.col));
+      case 'drop': {
+        if (Date.now() < (state.openingUntil ?? 0)) return 'Wait for the starting-player reveal';
+        return dropDisc(game, seat, asCol(msg.col));
+      }
     }
     return 'Unknown action';
   }
@@ -346,7 +367,7 @@ export class Connect4Room extends DurableObject {
   private syncBotMove(state: RoomState): void {
     const game = state.game;
     if (game?.phase === 'play' && state.players[game.currentSeat]?.isBot) {
-      state.botMoveAt ??= Date.now() + BOT_DELAY_MS;
+      state.botMoveAt ??= Math.max(Date.now(), state.openingUntil ?? 0) + BOT_DELAY_MS;
     } else {
       state.botMoveAt = null;
     }
@@ -498,12 +519,13 @@ export function buildView(state: RoomState, playerId: string) {
   return {
     type: 'state' as const,
     roomCode: state.roomCode,
+    serverTime: Date.now(),
     gameNo: state.gameNo,
     minPlayers: MIN_PLAYERS,
     maxPlayers: MAX_PLAYERS,
     you: { seat, isHost: state.hostId === playerId, id: playerId, kicked: (state.kickedIds ?? []).includes(playerId) },
     players: state.players.map((p) => ({
-      id: p.id, name: p.name, connected: p.connected, isHost: p.id === state.hostId, isBot: p.isBot === true,
+      id: p.id, name: p.name, connected: p.connected, isHost: p.id === state.hostId, isBot: p.isBot === true, colour: p.colour ?? 0,
       isGroupMember: state.groupId ? p.isGroupMember ?? null : null,
     })),
     groupName: state.groupName ?? null,
@@ -511,6 +533,7 @@ export function buildView(state: RoomState, playerId: string) {
     lastRating: state.lastRating,
     game: game && {
       numPlayers: 2,
+      opensAt: state.openingUntil ?? 0,
       phase: game.phase,
       currentSeat: game.currentSeat,
       board: game.board,

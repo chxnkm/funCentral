@@ -1,5 +1,5 @@
 // Local-only workerd/SQLite harness for Connect 4 room/bot integration tests.
-import { Miniflare, Response } from 'miniflare';
+import { Miniflare, Response, convertV4MiniflareOptions } from 'miniflare';
 import { build } from 'esbuild';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -36,18 +36,18 @@ export async function createConnect4RoomHarness() {
     bundle: true, write: false, format: 'esm', platform: 'neutral', target: 'es2022', external: ['cloudflare:*'],
   });
 
-  const mf = new Miniflare({
+  const options = {
     modules: true,
     script: outputFiles[0].text,
     compatibilityDate: '2024-12-01',
     compatibilityFlags: ['nodejs_compat'],
     durableObjects: { ROOM: { className: 'TestRoom', useSQLite: true } },
-    durableObjectsPersist: path.join(state, 'rooms'),
+    resourcePersistencePath: state,
     d1Databases: ['DB'],
-    d1Persist: path.join(state, 'db'),
     bindings: { TELEGRAM_BOT_TOKEN: 'local-test-token', ALLOW_DEV_LOGIN: '1' },
     outboundService: async () => Response.json({ ok: true, result: { status: 'member' } }),
-  });
+  };
+  let mf = new Miniflare(convertV4MiniflareOptions(options));
   await mf.ready;
 
   const room = async (name: string) => {
@@ -57,6 +57,11 @@ export async function createConnect4RoomHarness() {
 
   return {
     room,
+    async restart() {
+      await mf.dispose();
+      mf = new Miniflare(convertV4MiniflareOptions(options));
+      await mf.ready;
+    },
     async stop() {
       await mf.dispose();
       await rm(state, { recursive: true, force: true });
@@ -84,3 +89,13 @@ export async function connectSocket(
   socket.addEventListener('message', (event) => { frames.push(JSON.parse(event.data as string)); });
   return { socket, frames, send: (msg: unknown) => socket.send(JSON.stringify(msg)) };
 }
+
+/** Fixture-only completion for lifecycle tests, not a played-game/E2E result. */
+export async function finishFixtureRound(room: Awaited<ReturnType<HarnessRoom>>) {
+  const response = await room.fetch('https://room.test/debug/patch', {
+    method: 'POST', body: JSON.stringify({ phase: 'done', isDraw: true }),
+  });
+  if (!response.ok) throw new Error('Could not finish fixture round');
+}
+
+type HarnessRoom = Awaited<ReturnType<typeof createConnect4RoomHarness>>['room'];

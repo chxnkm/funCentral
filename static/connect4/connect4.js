@@ -3,8 +3,34 @@
 // ---------- Board helpers (mirror src/connect4/engine.ts; the room stays authoritative) ----------
 const COLS = 7;
 const ROWS = 6;
-const SEAT_COLORS = ['#ef3d4b', '#f5c451'];
+// Separate palettes keep all nine opposing combinations distinct. Disc IDs stay
+// seat-based (1/2); colours are cosmetic and never change the rules or ratings.
+const COLOUR_OPTIONS = [
+  [
+    { name: 'Red', fill: '#ef3d4b', light: '#ff8a8a', dark: '#b11f2e' },
+    { name: 'Rose', fill: '#e84aab', light: '#ffb3df', dark: '#a51b6b' },
+    { name: 'Violet', fill: '#a879f5', light: '#ddc5ff', dark: '#6940b8' },
+  ],
+  [
+    { name: 'Yellow', fill: '#f5c451', light: '#ffe48a', dark: '#c08a12' },
+    { name: 'Cyan', fill: '#39c7ed', light: '#a5edff', dark: '#0783a8' },
+    { name: 'Mint', fill: '#46d5a0', light: '#b1ffe0', dark: '#12825a' },
+  ],
+];
 const DISC_CLASS = ['red', 'yellow'];
+function seatColour(seat) {
+  const options = COLOUR_OPTIONS[seat];
+  return options[view?.players[seat]?.colour ?? 0] ?? options[0];
+}
+function applySeatColours() {
+  for (let seat = 0; seat < 2; seat++) {
+    const colour = seatColour(seat);
+    const prefix = `--c4-${DISC_CLASS[seat]}`;
+    document.body.style.setProperty(prefix, colour.fill);
+    document.body.style.setProperty(`${prefix}-light`, colour.light);
+    document.body.style.setProperty(`${prefix}-dark`, colour.dark);
+  }
+}
 const isOver = (g) => g.phase === 'done';
 
 // ---------- DOM helpers ----------
@@ -58,6 +84,81 @@ let hasSeenGame = false;
 let lastFocus = null;
 let renderedMoveCount = 0;
 const lobbySeen = new Set();
+const OPENING_REVEAL_MS = 2200;
+const openingReveal = { key: null, deadline: 0, timer: 0, lastBeat: -1, settledSound: false };
+
+function resetOpeningReveal() {
+  clearTimeout(openingReveal.timer);
+  openingReveal.key = null;
+  openingReveal.deadline = 0;
+  openingReveal.timer = 0;
+  openingReveal.lastBeat = -1;
+  openingReveal.settledSound = false;
+  $('c4-game').classList.remove('opening');
+}
+function openingActive() {
+  return view?.game?.phase === 'play' && view.game.moveCount === 0 &&
+    openingReveal.key === view.gameId && performance.now() < openingReveal.deadline;
+}
+function openingSettled() {
+  return !motionOK() || openingReveal.deadline - performance.now() <= 500;
+}
+function syncOpeningReveal(next) {
+  if (!next.game || next.game.phase !== 'play' || next.game.moveCount > 0) {
+    resetOpeningReveal();
+    return;
+  }
+  if (openingReveal.key === next.gameId) return;
+  resetOpeningReveal();
+  openingReveal.key = next.gameId;
+  // Use server-relative time, not the player's wall clock. Reloads resume rather
+  // than replay the reveal, and presence broadcasts don't restart its timer.
+  const remaining = Math.max(0, (next.game.opensAt ?? 0) - (next.serverTime ?? Date.now()));
+  openingReveal.deadline = performance.now() + remaining;
+  if (remaining > 0) openingReveal.timer = setTimeout(tickOpeningReveal, 0);
+}
+function paintOpeningReveal() {
+  const active = openingActive();
+  $('c4-game').classList.toggle('opening', active);
+  if (!active) return;
+  const elapsed = OPENING_REVEAL_MS - (openingReveal.deadline - performance.now());
+  const beats = [0, 140, 310, 510, 740, 1000, 1300];
+  const beat = Math.max(0, beats.filter(time => time <= elapsed).length - 1);
+  const settled = openingSettled();
+  const picked = settled ? view.game.currentSeat : beat % 2;
+  if (document.visibilityState === 'visible') {
+    if (settled && !openingReveal.settledSound) {
+      openingReveal.settledSound = true;
+      sfx.play('reveal');
+    } else if (!settled && openingReveal.lastBeat !== beat) {
+      openingReveal.lastBeat = beat;
+      sfx.play('shuffle');
+    }
+  }
+  for (const plate of $('c4-players').children) {
+    const selected = Number(plate.dataset.seat) === picked;
+    plate.classList.toggle('opening-pick', selected);
+    plate.classList.toggle('opening-settled', selected && settled);
+    const tag = plate.querySelector('.c4-opening-tag');
+    const label = settled ? 'first' : '…';
+    if (tag && tag.textContent !== label) tag.textContent = label;
+  }
+  renderTurn(view.game, false);
+  renderCaption(view.game);
+}
+function tickOpeningReveal() {
+  clearTimeout(openingReveal.timer);
+  openingReveal.timer = 0;
+  if (!openingActive()) {
+    if (view?.game && view.gameId === openingReveal.key) renderGame();
+    return;
+  }
+  paintOpeningReveal();
+  openingReveal.timer = setTimeout(tickOpeningReveal, 40);
+}
+document.addEventListener('visibilitychange', () => {
+  if (openingReveal.key) tickOpeningReveal();
+});
 
 // ---------- Sound (synthesised, off by default) ----------
 const sfx = (() => {
@@ -88,7 +189,31 @@ const sfx = (() => {
     osc.start(t0);
     osc.stop(t0 + dur + 0.05);
   }
+  function shuffleTick() {
+    const c = audio();
+    if (!c) return;
+    const duration = 0.045;
+    const buffer = c.createBuffer(1, Math.ceil(c.sampleRate * duration), c.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    const source = c.createBufferSource();
+    const filter = c.createBiquadFilter();
+    const amp = c.createGain();
+    source.buffer = buffer;
+    filter.type = 'lowpass';
+    filter.frequency.value = 1400;
+    filter.Q.value = 0.6;
+    const now = c.currentTime;
+    amp.gain.setValueAtTime(0.0001, now);
+    amp.gain.exponentialRampToValueAtTime(0.035, now + 0.004);
+    amp.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    source.connect(filter).connect(amp).connect(c.destination);
+    source.start(now);
+    source.stop(now + duration);
+  }
   const SOUNDS = {
+    shuffle: shuffleTick,
+    reveal: () => { tone(440, { dur: 0.1, type: 'triangle', gain: 0.025 }); tone(660, { at: 0.06, dur: 0.12, gain: 0.02 }); },
     drop: () => tone(240, { dur: 0.09, type: 'triangle', gain: 0.07, slide: -80 }),
     turn: () => { tone(660, { dur: 0.1, gain: 0.07 }); tone(990, { at: 0.1, dur: 0.16, gain: 0.07 }); },
     win: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, { at: i * 0.12, dur: 0.3, type: 'triangle', gain: 0.08 })),
@@ -225,6 +350,7 @@ function onState(next) {
   // refresh those parts without interrupting the results panel.
   if (next.game && prev?.game && prev.gameNo === next.gameNo && JSON.stringify(next.game) === JSON.stringify(prev.game)) {
     view = next;
+    syncOpeningReveal(next);
     renderTopBar();
     renderPlayers(next.game);
     renderTurn(next.game, next.you.seat >= 0 && next.game.currentSeat === next.you.seat && !isOver(next.game));
@@ -234,6 +360,7 @@ function onState(next) {
   fxReset();
   overPending = false;
   view = next;
+  syncOpeningReveal(next);
   if (next.you.kicked) joinBlocked = 'kicked';
   if (next.you.seat >= 0) { joinSent = true; joinBlocked = null; }
   if (next.game) { hasSeenGame = true; if (roomCode) store.set(`connect4Watched:${roomCode}`, '1'); }
@@ -284,8 +411,6 @@ function renderTopBar() {
   sound.textContent = sfx.on ? '🔊' : '🔇';
   sound.setAttribute('aria-pressed', String(sfx.on));
   sound.title = sfx.on ? 'Sound effects on' : 'Sound effects off';
-  const g = view?.game;
-  $('btn-end').classList.toggle('hidden', !(g && !isOver(g) && view.you.isHost && view.you.seat >= 0));
 }
 
 // ---------- Lobby ----------
@@ -294,6 +419,7 @@ function renderLobbyLoading() {
   $('lobby-players').replaceChildren(el('div', 'player-item c4-empty', 'Connecting…'));
   $('btn-start').classList.add('hidden');
   $('lobby-wait').textContent = '';
+  $('lobby-colours').classList.add('hidden');
   $('lobby-setup').classList.add('hidden');
 }
 
@@ -303,7 +429,7 @@ function statusDot(connected) {
 
 function avatarEl(p, seat) {
   const avatar = el('span', 'c4-avatar', p.isBot ? '🤖' : initialOf(p.name));
-  avatar.style.setProperty('--seat-color', SEAT_COLORS[seat]);
+  avatar.style.setProperty('--seat-color', seatColour(seat).fill);
   if (!p.isBot) avatar.append(statusDot(p.connected));
   return avatar;
 }
@@ -311,6 +437,8 @@ function avatarEl(p, seat) {
 const initialOf = (name) => ([...String(name || '?').trim()][0] || '?').toUpperCase();
 
 function renderLobby() {
+  applySeatColours();
+  renderColourPicker();
   const { players, you } = view;
   const max = view.maxPlayers;
   const min = view.minPlayers;
@@ -319,11 +447,12 @@ function renderLobby() {
   list.replaceChildren();
   players.forEach((p, seat) => {
     const item = el('div', 'player-item c4-player');
-    item.style.setProperty('--seat-color', SEAT_COLORS[seat]);
+    item.style.setProperty('--seat-color', seatColour(seat).fill);
     const identity = el('div', 'lobby-identity');
     identity.append(el('span', 'lobby-player-name', p.name));
     if (p.id === you.id) identity.append(el('span', 'c4-you', 'you'));
     const meta = el('div', 'lobby-meta');
+    meta.append(el('span', 'c4-colour-label', seatColour(seat).name));
     if (p.isHost) meta.append(el('span', 'c4-host', '👑 Host'));
     if (p.isBot) meta.append(el('span', 'c4-bot', '🤖 bot'));
     if (p.isGroupMember === false) meta.append(el('span', 'not-ranked-badge', '⚠️ not in group'));
@@ -350,7 +479,10 @@ function renderLobby() {
   const setup = $('lobby-setup');
   setup.classList.toggle('hidden', n < min);
   if (n >= min) {
-    const parts = [el('div', 'c4-setup-mode', '🔴 2 players · first to connect four in a row')];
+    const parts = [
+      el('div', 'c4-setup-mode', '🔴 2 players · first to connect four in a row'),
+      el('div', 'c4-setup-note', 'Random opener for the first game · rematches alternate'),
+    ];
     if (view.groupName) parts.push(el('div', 'c4-setup-group', `💬 ${view.groupName}`));
     setup.replaceChildren(...parts);
   }
@@ -388,13 +520,37 @@ function renderLobby() {
   }
 }
 
+function renderColourPicker() {
+  const seat = view.you.seat;
+  $('lobby-colours').classList.toggle('hidden', seat < 0);
+  const box = $('lobby-colour-options');
+  const focused = box.contains(document.activeElement) ? document.activeElement.dataset.colour : null;
+  box.replaceChildren();
+  if (seat < 0) return;
+  COLOUR_OPTIONS[seat].forEach((colour, index) => {
+    const button = el('button', 'c4-colour-option');
+    button.type = 'button';
+    button.dataset.colour = String(index);
+    button.setAttribute('aria-label', `${colour.name} discs`);
+    button.setAttribute('aria-pressed', String((view.players[seat].colour ?? 0) === index));
+    const swatch = el('span', 'c4-colour-swatch');
+    swatch.style.background = `radial-gradient(circle at 35% 30%, ${colour.light}, ${colour.fill} 62%, ${colour.dark})`;
+    swatch.setAttribute('aria-hidden', 'true');
+    button.append(swatch, el('span', null, colour.name));
+    button.addEventListener('click', () => send({ type: 'setColour', colour: index }));
+    box.append(button);
+  });
+  if (focused != null) box.querySelector(`[data-colour="${focused}"]`)?.focus({ preventScroll: true });
+}
+
 // ---------- Game rendering ----------
 const playerNameOf = (seat) => view.players[seat]?.name ?? `Player ${seat + 1}`;
 const who = (seat) => (seat === view.you.seat ? 'You' : playerNameOf(seat));
 
 function renderGame() {
+  applySeatColours();
   const g = view.game;
-  const myTurn = view.you.seat >= 0 && g.currentSeat === view.you.seat && !isOver(g);
+  const myTurn = view.you.seat >= 0 && g.currentSeat === view.you.seat && !isOver(g) && !openingActive();
   $('c4-game').classList.toggle('my-turn', myTurn);
   renderPlayers(g);
   renderDrops(g, myTurn);
@@ -409,18 +565,24 @@ function renderPlayers(g) {
   box.replaceChildren();
   for (let seat = 0; seat < 2; seat++) {
     const p = view.players[seat];
-    const active = !isOver(g) && g.currentSeat === seat;
+    const active = !openingActive() && !isOver(g) && g.currentSeat === seat;
     const plate = el('div', `c4-plate${active ? ' active' : ''}${g.winner === seat ? ' winner' : ''}${p?.connected === false ? ' offline' : ''}`);
     plate.dataset.seat = String(seat);
-    plate.style.setProperty('--seat-color', SEAT_COLORS[seat]);
+    plate.style.setProperty('--seat-color', seatColour(seat).fill);
     const info = el('div', 'c4-plate-info');
     info.append(el('span', 'c4-plate-name', p?.isBot ? `🤖 ${p.name}` : (p?.name ?? `Player ${seat + 1}`)));
-    info.append(el('span', 'c4-plate-sub', seat === 0 ? 'Red' : 'Yellow'));
+    info.append(el('span', 'c4-plate-sub', seatColour(seat).name));
     plate.append(el('span', `c4-disc-dot ${DISC_CLASS[seat]}`), info);
+    if (openingActive()) {
+      const tag = el('span', 'c4-plate-tag c4-opening-tag', '…');
+      tag.setAttribute('aria-hidden', 'true');
+      plate.append(tag);
+    }
     if (active && !isOver(g)) plate.append(el('span', 'c4-plate-tag', 'to play'));
     if (g.winner === seat) plate.append(el('span', 'c4-plate-tag', '🏆'));
     box.append(plate);
   }
+  paintOpeningReveal();
 }
 
 function renderDrops(g, myTurn) {
@@ -463,6 +625,14 @@ function renderCells(g) {
 
 function renderTurn(g, myTurn) {
   const t = $('c4-turn');
+  if (openingActive()) {
+    t.classList.remove('mine', 'pop');
+    const message = openingSettled()
+      ? (g.currentSeat === view.you.seat ? 'You go first!' : `${playerNameOf(g.currentSeat)} goes first`)
+      : 'Who goes first?';
+    if (t.textContent !== message) t.textContent = message;
+    return;
+  }
   t.classList.toggle('mine', myTurn);
   if (t.dataset.turn !== `${view.gameNo}:${g.currentSeat}:${g.phase}`) {
     t.dataset.turn = `${view.gameNo}:${g.currentSeat}:${g.phase}`;
@@ -481,11 +651,16 @@ function renderTurn(g, myTurn) {
 
 function renderCaption(g) {
   const cap = $('c4-caption');
+  if (openingActive()) {
+    const message = openingSettled() ? 'Round starts shortly…' : 'Watch the border land on the starting player.';
+    if (cap.textContent !== message) cap.textContent = message;
+    return;
+  }
   if (isOver(g)) {
     cap.textContent = g.isDraw ? 'The board is full.' : `${playerNameOf(g.winner)} connected four.`;
     return;
   }
-  const disc = g.currentSeat === 0 ? 'Red' : 'Yellow';
+  const disc = seatColour(g.currentSeat).name;
   cap.textContent = view.you.seat < 0 ? `${playerNameOf(g.currentSeat)} (${disc}) to play` : `${who(g.currentSeat)} (${disc}) to play`;
 }
 
@@ -537,7 +712,9 @@ function showOverModal(g) {
   $('over-sub').textContent = view.you.seat >= 0 && !youWon && !draw ? 'Better luck next time' : draw ? 'Nobody connected four' : 'Four in a row';
   const rows = [0, 1].map((seat) => {
     const row = el('div', `c4-result${seat === view.you.seat ? ' me' : ''}`);
-    row.append(el('span', `c4-result-disc ${DISC_CLASS[seat]}`));
+    const disc = el('span', `c4-result-disc ${DISC_CLASS[seat]}`);
+    disc.setAttribute('aria-label', `${seatColour(seat).name} discs`);
+    row.append(disc);
     row.append(el('span', 'c4-result-name', who(seat)));
     row.append(el('span', 'c4-result-outcome', draw ? 'Draw' : g.winner === seat ? 'Winner' : ''));
     return row;
@@ -658,6 +835,7 @@ function enterRoom(code) {
 }
 
 function leaveRoom(notify = true) {
+  resetOpeningReveal();
   if (notify) send({ type: 'leave' });
   const socket = ws;
   ws = null;
@@ -796,16 +974,6 @@ $('btn-leave').addEventListener('click', async () => {
   const midGame = g && !isOver(g) && view.you.seat >= 0;
   if (midGame && !await askConfirm({ title: 'Leave this game?', body: 'The table waits for you — your seat is kept if you come back.', ok: 'Leave', danger: true })) return;
   leaveRoom(true);
-});
-$('btn-end').addEventListener('click', async () => {
-  if (!view?.game) return;
-  const ok = await askConfirm({
-    title: 'End this game?',
-    body: 'Everyone returns to the lobby. A game that is ended early is not rated.',
-    ok: 'End game',
-    danger: true,
-  });
-  if (ok) send({ type: 'backToLobby' });
 });
 $('btn-sound').addEventListener('click', () => { sfx.toggle(); renderTopBar(); });
 $('btn-stats').addEventListener('click', showStats);

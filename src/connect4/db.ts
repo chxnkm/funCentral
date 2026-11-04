@@ -1,5 +1,5 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { computeConnect4Deltas, START_RATING, type PlacedPlayer } from './rating';
+import { computeConnect4Deltas, PITY_LOSS_THRESHOLD, START_RATING, type PlacedPlayer } from './rating';
 
 export interface Connect4PlayerResult {
   telegramId: number;
@@ -47,6 +47,27 @@ export async function recordConnect4Game(db: D1Database, result: Connect4GameRes
     gamesPlayed: existing.get(id)?.games_played ?? 0,
   }));
   const deltas = computeConnect4Deltas(placed);
+  const protectedDeltas = computeConnect4Deltas(placed, true);
+  const loser = placed.find((p) => p.place === 2);
+  const winner = placed.find((p) => p.place === 1);
+  // Evaluate inside the batch, not in a separate read: simultaneous completions
+  // must see the preceding committed result when deciding the fourth loss.
+  // Exclude this game so both history inserts and duplicate retries see the
+  // same prior streak. The loser's latest rated games define that streak.
+  const pityCondition = placed.length === 2 && loser && winner ? `(
+    SELECT COUNT(*) = ${PITY_LOSS_THRESHOLD} AND SUM(CASE
+      WHEN recent.place = 2 AND EXISTS (
+        SELECT 1 FROM connect4_rating_history opponent
+        WHERE opponent.game_id = recent.game_id AND opponent.telegram_id = ? AND opponent.place = 1
+      ) THEN 1 ELSE 0 END) = ${PITY_LOSS_THRESHOLD}
+    FROM (
+      SELECT game_id, place FROM connect4_rating_history
+      WHERE telegram_id = ? AND game_id <> ?
+      ORDER BY rowid DESC LIMIT ${PITY_LOSS_THRESHOLD}
+    ) recent
+  )` : '0';
+  const pityBindings = placed.length === 2 && loser && winner
+    ? [winner.telegramId, loser.telegramId, result.gameId] : [];
 
   // D1 batches are transactions. Gate every write on the completion marker and
   // insert that marker LAST, so failures roll back and concurrent retries are no-ops.
@@ -56,23 +77,26 @@ export async function recordConnect4Game(db: D1Database, result: Connect4GameRes
     const draw = byId.get(p.telegramId)!.draw ? 1 : 0;
     return [
       db.prepare(
-        `INSERT INTO connect4_rating_history (game_id, telegram_id, place, rating_before, rating_after, delta, played_at)
-         SELECT ?, ?, ?, COALESCE(r.rating, ?), COALESCE(r.rating, ?) + ?, ?, ?
+        `WITH adjustment AS (SELECT CASE WHEN ${pityCondition} THEN ? ELSE ? END AS delta)
+         INSERT INTO connect4_rating_history (game_id, telegram_id, place, rating_before, rating_after, delta, played_at)
+         SELECT ?, ?, ?, COALESCE(r.rating, ?), COALESCE(r.rating, ?) + adjustment.delta, adjustment.delta, ?
          FROM (SELECT 1) LEFT JOIN connect4_ratings r ON r.telegram_id = ?
+         CROSS JOIN adjustment
          WHERE NOT EXISTS (SELECT 1 FROM connect4_games WHERE game_id = ?)
          RETURNING telegram_id AS telegramId, rating_before AS before, rating_after AS after, delta`,
-      ).bind(result.gameId, p.telegramId, p.place, START_RATING, START_RATING, delta, delta, now, p.telegramId, result.gameId),
+      ).bind(...pityBindings, protectedDeltas.get(p.telegramId) ?? 0, delta,
+        result.gameId, p.telegramId, p.place, START_RATING, START_RATING, now, p.telegramId, result.gameId),
       db.prepare(
         `INSERT INTO connect4_ratings (telegram_id, rating, games_played, wins, draws, updated_at)
-         SELECT ?, ?, 1, ?, ?, ?
+         SELECT ?, ? + (SELECT delta FROM connect4_rating_history WHERE game_id = ? AND telegram_id = ?), 1, ?, ?, ?
          WHERE NOT EXISTS (SELECT 1 FROM connect4_games WHERE game_id = ?)
          ON CONFLICT(telegram_id) DO UPDATE SET
-           rating = connect4_ratings.rating + ?,
+           rating = connect4_ratings.rating + excluded.rating - ?,
            games_played = games_played + 1,
            wins = wins + excluded.wins,
            draws = draws + excluded.draws,
            updated_at = excluded.updated_at`,
-      ).bind(p.telegramId, START_RATING + delta, won, draw, now, result.gameId, delta),
+      ).bind(p.telegramId, START_RATING, result.gameId, p.telegramId, won, draw, now, result.gameId, START_RATING),
     ];
   });
   if (result.groupId) {

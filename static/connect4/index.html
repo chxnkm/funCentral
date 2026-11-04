@@ -21,7 +21,6 @@
     <span id="tb-name" class="top-bar-name"></span>
     <button id="btn-sound" type="button" class="c4-icon-btn" aria-pressed="false" aria-label="Sound effects" title="Sound effects"></button>
     <button id="btn-rules" type="button" class="c4-icon-btn" aria-label="How to play" title="How to play">?</button>
-    <button id="btn-end" type="button" class="c4-icon-btn hidden" aria-label="End this game" title="End this game (host)">⏹</button>
     <button id="btn-leave" type="button" class="btn-leave-global">Leave</button>
   </div>
 
@@ -38,17 +37,24 @@
 
   <!-- Home -->
   <div id="screen-home" class="screen active">
+    <div class="c4-home-wrap">
     <div class="home-container c4-home">
       <a href="/" class="fc-back-link">← funCentral</a>
       <div class="c4-hero" aria-hidden="true">
         <div class="c4-hero-board">
-          <span class="c4-hero-cell red"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell yellow"></span>
-          <span class="c4-hero-cell red"></span><span class="c4-hero-cell yellow"></span><span class="c4-hero-cell red"></span><span class="c4-hero-cell"></span>
-          <span class="c4-hero-cell yellow"></span><span class="c4-hero-cell red"></span><span class="c4-hero-cell yellow"></span><span class="c4-hero-cell red"></span>
+          <span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span>
+          <span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span>
+          <span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell red"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span>
+          <span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell red"></span><span class="c4-hero-cell yellow"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span>
+          <span class="c4-hero-cell"></span><span class="c4-hero-cell red"></span><span class="c4-hero-cell yellow"></span><span class="c4-hero-cell red"></span><span class="c4-hero-cell yellow"></span><span class="c4-hero-cell"></span><span class="c4-hero-cell"></span>
+          <span class="c4-hero-cell red"></span><span class="c4-hero-cell yellow"></span><span class="c4-hero-cell red"></span><span class="c4-hero-cell yellow"></span><span class="c4-hero-cell yellow"></span><span class="c4-hero-cell red"></span><span class="c4-hero-cell yellow"></span>
         </div>
       </div>
       <h1 class="c4-title">Connect 4</h1>
-      <p class="subtitle">Four in a row wins · 2 players</p>
+      <p class="c4-tagline">Drop a disc. Connect four. Claim the board.</p>
+      <ul class="c4-feature-chips" aria-label="At a glance">
+        <li>👥 2 players</li><li>🤖 Practice bot</li><li>🏆 Rated</li>
+      </ul>
 
       <p id="identity-status" class="subtitle hidden" role="status" aria-live="polite"></p>
 
@@ -72,9 +78,9 @@
           <label for="input-name">Your Name</label>
           <input type="text" id="input-name" placeholder="Enter your name" maxlength="64" autocomplete="off" enterkeyhint="done">
         </div>
-        <button id="btn-create" type="button" class="btn btn-primary">🔴 Create Game</button>
+        <button id="btn-create" type="button" class="btn btn-primary">＋ Create a table</button>
 
-        <div class="divider"><span>or join a table</span></div>
+        <div class="divider"><span>or join with a code</span></div>
 
         <div class="c4-join-row">
           <input type="text" id="input-code" placeholder="CODE" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="go" aria-label="Room code">
@@ -88,7 +94,8 @@
         <button id="btn-stats" type="button" class="btn btn-ghost">📊 Stats</button>
       </div>
 
-      <div id="leaderboard-section"></div>
+    </div>
+      <div id="leaderboard-section" class="c4-home-board"></div>
     </div>
   </div>
 
@@ -110,7 +117,7 @@
         </div>
       </div>
       <div id="stats-content"></div>
-      <p class="stats-footer">Rating = standard two-player Elo · Separate from Bridge ELO, Regicide and Tai Di</p>
+      <p class="stats-footer">Rating = two-player Elo · K = 16 for your first 30 rated games, then 8 · Separate from other games</p>
     </div>
   </div>
 
@@ -127,6 +134,11 @@
         <button id="btn-share" type="button" class="btn btn-secondary">Share Invite Link</button>
       </div>
       <div id="lobby-players" class="player-list c4-seats"></div>
+      <fieldset id="lobby-colours" class="c4-colour-picker hidden">
+        <legend>Your discs</legend>
+        <div id="lobby-colour-options" class="c4-colour-options"></div>
+        <p>Each side has its own palette, so colours stay distinct.</p>
+      </fieldset>
       <div id="lobby-setup" class="c4-setup"></div>
       <p id="lobby-wait" class="status-text">Waiting for players...</p>
       <button id="btn-take-seat" type="button" class="btn btn-secondary hidden">Take a Seat</button>
@@ -145,7 +157,7 @@
           <div id="c4-drops" class="c4-drops" aria-label="Choose a column"></div>
           <div id="c4-cells" class="c4-cells" aria-label="Connect 4 board"></div>
         </div>
-        <h3 id="c4-turn" class="c4-turn"></h3>
+        <h3 id="c4-turn" class="c4-turn" role="status" aria-live="polite" aria-atomic="true"></h3>
         <p id="c4-caption" class="c4-caption"></p>
       </section>
 
@@ -196,16 +208,18 @@
 
       <h3>Turns</h3>
       <ol>
-        <li>The player who created the room (the host) drops first as <b>red</b>; the second player is <b>yellow</b>.</li>
+        <li>Choose your disc colour in the lobby: the host gets <b>Red, Rose or Violet</b>; the second player gets <b>Yellow, Cyan or Mint</b>. The two palettes stay distinct. The first game's opener is chosen randomly, then players alternate opening each rematch. A short border shuffle reveals the opener before anyone can drop a disc.</li>
         <li>Click or tap the column you want, and your disc drops into it.</li>
         <li>You can't play into a column that is already full.</li>
       </ol>
 
       <h3>Winning &amp; rating</h3>
-      <p>A win is rated as a standard two-player Elo match; a full-board draw is a 0.5 result for both. Games ended early, and games against the practice bot, are not rated.</p>
+      <p>A win is rated as a standard two-player Elo match; a full-board draw is a 0.5 result for both. The K-factor is 16 for your first 30 rated games, then 8, for gentler rating gains and losses. Games against the practice bot are not rated. Rounds must finish before returning to the lobby. Leaving mid-round keeps your seat and the current game.</p>
+
+      <p><b>Rematch protection:</b> after three consecutive rated losses to the same opponent, further losses in that streak halve <em>both</em> players' rating changes again, before rounding. A rated win, draw, or game against someone else breaks the streak. Practice games do not affect it.</p>
 
       <h3>Playing solo</h3>
-      <p>As the host, tap <b>🤖 Add Bot</b> in the lobby to seat a practice opponent, then start the game. The bot plays a shallow minimax strategy: it takes immediate wins, blocks yours, and prefers the centre columns.</p>
+      <p>As the host, tap <b>🤖 Add Bot</b> in the lobby to seat a practice opponent, then start the game. The practice bot looks ahead two plies: it takes immediate wins, blocks obvious threats, and prefers the centre columns. Longer traps can catch it out.</p>
     </div>
   </div>
 

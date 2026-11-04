@@ -50,12 +50,12 @@ describe('Connect 4 D1 completion transactions (real Miniflare SQLite)', () => {
   it('rates a win: winner up, loser down, history and group stats written', async () => {
     const changes = await recordConnect4Game(db, win('g1'));
     expect(changes).toEqual([
-      { telegramId: 1, before: 1000, after: 1016, delta: 16 },
-      { telegramId: 2, before: 1000, after: 984, delta: -16 },
+      { telegramId: 1, before: 1000, after: 1008, delta: 8 },
+      { telegramId: 2, before: 1000, after: 992, delta: -8 },
     ]);
     expect(await db.prepare('SELECT telegram_id, rating, games_played, wins, draws FROM connect4_ratings ORDER BY telegram_id').all().then((r) => r.results)).toEqual([
-      { telegram_id: 1, rating: 1016, games_played: 1, wins: 1, draws: 0 },
-      { telegram_id: 2, rating: 984, games_played: 1, wins: 0, draws: 0 },
+      { telegram_id: 1, rating: 1008, games_played: 1, wins: 1, draws: 0 },
+      { telegram_id: 2, rating: 992, games_played: 1, wins: 0, draws: 0 },
     ]);
     expect(await db.prepare('SELECT telegram_id, place FROM connect4_rating_history ORDER BY telegram_id').all().then((r) => r.results)).toEqual([
       { telegram_id: 1, place: 1 }, { telegram_id: 2, place: 2 },
@@ -65,6 +65,17 @@ describe('Connect 4 D1 completion transactions (real Miniflare SQLite)', () => {
       { telegram_id: 2, games_played: 1, wins: 0, draws: 0 },
     ]);
     expect(await count('connect4_games')).toBe(1);
+  });
+
+  it('keeps existing ratings and applies only a four-point change after 30 rated games', async () => {
+    await db.prepare('INSERT INTO connect4_ratings (telegram_id, rating, games_played, updated_at) VALUES (1, 1200, 30, 0), (2, 1200, 30, 0)').run();
+    expect(await recordConnect4Game(db, win('experienced'))).toEqual([
+      { telegramId: 1, before: 1200, after: 1204, delta: 4 },
+      { telegramId: 2, before: 1200, after: 1196, delta: -4 },
+    ]);
+    expect(await db.prepare('SELECT rating, games_played FROM connect4_ratings ORDER BY telegram_id').all().then(result => result.results)).toEqual([
+      { rating: 1204, games_played: 31 }, { rating: 1196, games_played: 31 },
+    ]);
   });
 
   it('rates a draw as 0.5 for both players with no rating change at equal ratings', async () => {
@@ -83,7 +94,7 @@ describe('Connect 4 D1 completion transactions (real Miniflare SQLite)', () => {
     const input = win('repeat');
     expect(await recordConnect4Game(db, input)).toHaveLength(2);
     expect(await recordConnect4Game(db, input)).toEqual([]);
-    expect(await db.prepare('SELECT rating, games_played FROM connect4_ratings WHERE telegram_id = 1').first()).toEqual({ rating: 1016, games_played: 1 });
+    expect(await db.prepare('SELECT rating, games_played FROM connect4_ratings WHERE telegram_id = 1').first()).toEqual({ rating: 1008, games_played: 1 });
     expect(await count('connect4_rating_history')).toBe(2);
     expect(await count('connect4_games')).toBe(1);
   });
@@ -92,7 +103,7 @@ describe('Connect 4 D1 completion transactions (real Miniflare SQLite)', () => {
     await recordConnect4Game(db, win('a'));
     await recordConnect4Game(db, win('b'));
     expect(await db.prepare('SELECT games_played FROM connect4_ratings WHERE telegram_id = 1').first('games_played')).toBe(2);
-    expect(await db.prepare('SELECT rating FROM connect4_ratings WHERE telegram_id = 1').first('rating')).toBeGreaterThan(1016);
+    expect(await db.prepare('SELECT rating FROM connect4_ratings WHERE telegram_id = 1').first('rating')).toBeGreaterThan(1008);
   });
 
   it('rolls back a late group failure and retries the complete game exactly once', async () => {

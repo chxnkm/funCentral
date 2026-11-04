@@ -13,7 +13,8 @@ import {
   type Connect4Game,
 } from './engine';
 
-export const BOT_DEPTH = 5;
+// Casual practice: see short tactics, but leave longer traps for the human.
+export const BOT_DEPTH = 2;
 
 const WIN_SCORE = 100000;
 /** Points for 1, 2, 3 or 4 of your discs in an unblocked 4-cell window. */
