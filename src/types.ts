@@ -85,6 +85,9 @@ export interface GameState {
   pingCooldowns: { [seat: number]: number }; // timestamp of last ping per recipient seat
   disconnectTimers: { [seat: number]: number }; // timestamp when player disconnected (0 if connected)
   isPractice: boolean; // snapshotted at deal start; not recomputed mid-game when bots replace humans
+  redealCount?: number; // all-pass redeals before this hand's bidding succeeded
+  replacedSeats?: number[]; // seats a bot took over during this hand, even if the human later returned
+  dealtBotSeats?: number[]; // seats held by a bot when this hand was dealt; they credit no human
   abandonVote?: {
     initiatorSeat: number;
     initiatorId: string;

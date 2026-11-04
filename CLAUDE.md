@@ -79,7 +79,10 @@ See [deployment](docs/deployment.md) for the workflow and rollout checkpoint.
 - **`src/protocol.ts`** — Bridge client/server WebSocket message unions (Regicide owns its separate protocol in `src/regicide/room.ts`).
 - **`src/history.ts`** — Per-user game list + full replay payload (D1 queries, server-side trick-winner computation, rating injection).
 - **`src/move-rating.ts`** — Heuristic move rating engine (`rateGame`, `summarize`); labels each played card as best/good/inaccuracy/mistake/blunder.
-- **`src/game-logging.ts`** — Writes `game_hands` (with per-seat `telegram_id`), `game_tricks`, and `game_metadata` (with `is_practice`). Runs for **all** games, including practice.
+- **`src/game-logging.ts`** — Writes `game_hands` (with per-seat `telegram_id`), `game_tricks`, and `game_metadata` (with `is_practice`). Runs for **all** games, including practice. An all-pass redeal rewrites the dealt hands.
+- **`src/stats-db.ts`** — `persistRatedResult` (users counters, `group_stats`, pair Elo, `elo_history`, `game_records` in one guarded transaction) and the stats queries. `src/elo.ts` keeps the legacy formula.
+- **`src/bridge-completion.ts`** — Completion record saved with the final state, group result message, and who is rated (`ratedTelegramId`).
+- **`src/skill-rating.ts`, `src/rating-db.ts`, `src/deal-features.ts`** — Shadow `skill-v1` rating (pure), its snapshot/ledger/events persistence, and starting-hand features. Shadow only: no board reads them yet. Plan and queries: `docs/bridge-rating.md`.
 
 ### Bridge Frontend (Vanilla JS SPA)
 
@@ -155,7 +158,10 @@ Completed Bridge games (practice *and* rated) are replayable from the Bridge hom
 - **`game_records`** — rated games only. Source of truth for leaderboard / ELO / head-to-head. **Practice games are deliberately excluded from this table** so they don't pollute stats.
 
 ### Key invariant
-`game_hands` / `game_metadata` / `game_tricks` are written for **every** completed game (see the `waitUntil` block in `game-room.ts` after each win path). `game_records` / `recordGameStats` / `recordEloUpdate` are gated by `!isPracticeGame`.
+`game_hands` / `game_metadata` / `game_tricks` are written for **every** completed game (`persistGameLog`, the completion record's `log` step). `game_records`, users counters, `group_stats` and Elo (`persistRatedResult`, the `rated` step) are skipped for practice games.
+
+### Completion (`src/bridge-completion.ts`)
+A finished or abandoned hand is saved as a completion record in room storage (`completions` key) **in the same write as the final state**, before any D1/Telegram I/O; `drainCompletions` then runs and retries each step via the alarm. Keep every step idempotent: the rated step is one D1 transaction whose writes are guarded by the hand's `game_records` rows (inserted last), Elo is added (`elo = elo + ?`), logs are upserts/insert-once, bets settle only while unsettled. Do not delete room storage while completions are pending. Only humans seated when a hand is dealt (`dealtBotSeats`) are rated for it. The `bridge_*` shadow rating/season tables (migration `0013`) are best-effort and never block legacy stats; see [docs/bridge-rating.md](docs/bridge-rating.md).
 
 ### Replay authorization
 `getGameReplay` checks the caller participated via `SELECT 1 FROM game_hands WHERE game_id = ? AND telegram_id = ?`. Do **not** switch this back to `game_records` — that would re-exclude practice games.

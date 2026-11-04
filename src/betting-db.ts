@@ -1,4 +1,4 @@
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
 
 export interface BettingLeaderboardEntry {
   rank: number;
@@ -56,7 +56,8 @@ export async function placeBet(
 
 /**
  * Settle all pending bets for a game and update betting ELO for authenticated bettors.
- * Should be called once when the game ends.
+ * All changes commit in one transaction and only touch bets that are still unsettled,
+ * so a retried settlement never applies a bet twice.
  */
 export async function settleBetsAndUpdateElo(
   db: D1Database,
@@ -76,6 +77,8 @@ export async function settleBetsAndUpdateElo(
   if (bets.length === 0) return;
 
   const now = Math.floor(Date.now() / 1000);
+  const UNSETTLED = 'EXISTS (SELECT 1 FROM betting_records WHERE game_id = ? AND spectator_id = ? AND correct IS NULL)';
+  const stmts: D1PreparedStatement[] = [];
 
   for (const bet of bets) {
     const isCorrect = (bet.prediction === 'win') === bidderTeamWon;
@@ -101,29 +104,28 @@ export async function settleBetsAndUpdateElo(
       const eloBefore = userRow.betting_elo;
       const eloAfter = Math.max(100, eloBefore + delta);
 
-      await db
-        .prepare(`UPDATE users SET betting_elo = ? WHERE telegram_id = ?`)
-        .bind(eloAfter, telegramId)
-        .run();
-
-      await db
-        .prepare(
-          `INSERT INTO betting_elo_history (game_id, telegram_id, elo_before, elo_after, delta, correct, placed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(gameId, telegramId, eloBefore, eloAfter, delta, isCorrect ? 1 : 0, now)
-        .run();
+      stmts.push(
+        db
+          .prepare(`UPDATE users SET betting_elo = MAX(100, betting_elo + ?) WHERE telegram_id = ? AND ${UNSETTLED}`)
+          .bind(delta, telegramId, gameId, bet.spectator_id),
+        db
+          .prepare(
+            `INSERT INTO betting_elo_history (game_id, telegram_id, elo_before, elo_after, delta, correct, placed_at)
+             SELECT ?, ?, ?, ?, ?, ?, ? WHERE ${UNSETTLED}`,
+          )
+          .bind(gameId, telegramId, eloBefore, eloAfter, delta, isCorrect ? 1 : 0, now, gameId, bet.spectator_id),
+      );
     }
   }
 
-  await db
+  stmts.push(db
     .prepare(
       `UPDATE betting_records
        SET correct = CASE WHEN (prediction = 'win') = ? THEN 1 ELSE 0 END
        WHERE game_id = ? AND correct IS NULL`,
     )
-    .bind(bidderTeamWon ? 1 : 0, gameId)
-    .run();
+    .bind(bidderTeamWon ? 1 : 0, gameId));
+  await db.batch(stmts);
 }
 
 /**

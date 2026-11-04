@@ -1,28 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import {
-  insertGameHands,
-  updateGameFinalHands,
-  insertGameTricks,
-  insertGameMetadata,
-} from '../src/game-logging';
-import type { Player, Hand, TrickLogEntry, BidHistoryEntry } from '../src/types';
+import { insertGameHands, persistGameLog } from '../src/game-logging';
+import { buildCompletion } from '../src/bridge-completion';
+import type { Player, Hand } from '../src/types';
+import { finishedState } from './bridge-fixtures';
 
 function makeMockDb() {
   const calls: Array<{ sql: string; args: unknown[] }> = [];
-  let runCalled = false;
   return {
     prepare(sql: string) {
       return {
         bind(...args: unknown[]) {
-          return {
-            _sql: sql,
-            _args: args,
-            async run() {
-              runCalled = true;
-              calls.push({ sql, args });
-              return { success: true, results: [], meta: {} };
-            },
-          };
+          return { _sql: sql, _args: args };
         },
       };
     },
@@ -31,8 +19,7 @@ function makeMockDb() {
       return stmts.map(() => ({ success: true, results: [], meta: {} }));
     },
     _calls: calls,
-    _runCalled: () => runCalled,
-  } as unknown as D1Database & { _calls: typeof calls; _runCalled: () => boolean };
+  } as unknown as D1Database & { _calls: typeof calls };
 }
 
 function makeHand(clubs = ['A'], diamonds = ['K'], hearts = ['Q'], spades = ['J']): Hand {
@@ -49,13 +36,17 @@ function makePlayers(): Player[] {
 }
 
 describe('insertGameHands', () => {
-  it('inserts one row per player with flattened card arrays', async () => {
+  it('upserts one row per player with flattened card arrays', async () => {
     const db = makeMockDb();
     const players = makePlayers();
     const hands = [makeHand(), makeHand(), makeHand(), makeHand()];
     await insertGameHands(db, 'game-1', players, hands);
     expect(db._calls).toHaveLength(4);
     expect(db._calls[0].sql).toContain('INSERT INTO game_hands');
+    // An all-pass redeal writes the same rows again with the new cards.
+    expect(db._calls[0].sql).toContain('ON CONFLICT(game_id, seat) DO UPDATE SET');
+    expect(db._calls[0].sql).toContain('initial_hand = excluded.initial_hand');
+    expect(db._calls[0].sql).not.toContain('played_at = excluded');
     expect(db._calls[0].args[0]).toBe('game-1');
     expect(db._calls[0].args[1]).toBe(0); // seat
     expect(db._calls[0].args[2]).toBe('Alice'); // name
@@ -67,53 +58,47 @@ describe('insertGameHands', () => {
     expect(db._calls[2].args[3]).toBe(null); // Bot A
     expect(db._calls[3].args[3]).toBe(null); // Carol (guest)
   });
-});
 
-describe('updateGameFinalHands', () => {
-  it('updates one row per player with remaining cards', async () => {
+  it('keeps the participation index for a bot covering an absent human', async () => {
     const db = makeMockDb();
     const players = makePlayers();
-    const hands = [makeHand(['2'], [], [], []), makeHand(), makeHand(), makeHand()];
-    await updateGameFinalHands(db, 'game-1', players, hands);
-    expect(db._calls).toHaveLength(4);
-    expect(db._calls[0].sql).toContain('UPDATE game_hands');
-    const final0 = JSON.parse(db._calls[0].args[0] as string) as string[];
-    expect(final0).toEqual(['2 ♣']);
+    players[2] = { ...players[2], id: 'bot_replacement_2', isBot: true, originalPlayerId: 'tg_3' };
+    await insertGameHands(db, 'game-1', players, [makeHand(), makeHand(), makeHand(), makeHand()]);
+    expect(db._calls[2].args[3]).toBe(3);
   });
 });
 
-describe('insertGameTricks', () => {
-  it('inserts one row per trickLog entry', async () => {
+describe('persistGameLog', () => {
+  it('writes hands, every card and the metadata in one batch', async () => {
     const db = makeMockDb();
-    const log: TrickLogEntry[] = [
-      { trickNum: 1, playOrder: 1, seat: 0, card: 'A ♠' },
-      { trickNum: 1, playOrder: 2, seat: 1, card: 'K ♠' },
-    ];
-    await insertGameTricks(db, 'game-1', log);
-    expect(db._calls).toHaveLength(2);
-    expect(db._calls[0].sql).toContain('INSERT INTO game_tricks');
-    expect(db._calls[0].args).toEqual(['game-1', 1, 1, 0, 'A ♠']);
+    const c = buildCompletion(finishedState(), { kind: 'completed', bidderWon: true }, null, 1_700_000_000_000);
+    await persistGameLog(db, c);
+    expect(db._calls).toHaveLength(4 + 52 + 1);
+
+    const [hand0] = db._calls;
+    expect(hand0.sql).toContain('final_hand = excluded.final_hand');
+    expect(JSON.parse(hand0.args[4] as string)).toHaveLength(13); // dealt hand from the room record
+    expect(JSON.parse(hand0.args[5] as string)).toEqual([]); // final hand
+    expect(hand0.args[6]).toBe(1_700_000_000);
+
+    const trick = db._calls[4];
+    expect(trick.sql).toContain('INSERT OR IGNORE INTO game_tricks');
+    expect(trick.args).toEqual(['game-fixture', 1, 1, 0, 'A ♠']);
+
+    const metadata = db._calls[56];
+    expect(metadata.sql).toContain('INSERT OR IGNORE INTO game_metadata');
+    expect(metadata.args.slice(0, 5)).toEqual(['game-fixture', 0, 4, '🚫', 'A ♦']);
+    expect(JSON.parse(metadata.args[7] as string)).toEqual([5, 3, 2, 3]);
+    expect(metadata.args[8]).toBe('bidder');
+    expect(metadata.args[10]).toBe(0);
   });
 
-  it('does nothing when trickLog is empty', async () => {
+  it('labels a defended practice hand', async () => {
     const db = makeMockDb();
-    await insertGameTricks(db, 'game-1', []);
-    expect(db._calls).toHaveLength(0);
-  });
-});
-
-describe('insertGameMetadata', () => {
-  it('inserts one metadata row', async () => {
-    const db = makeMockDb();
-    const players = makePlayers();
-    const bidHistory: BidHistoryEntry[] = [{ seat: 0, name: 'Alice', bidNum: 12 }];
-    await insertGameMetadata(
-      db, 'game-1', 0, 12, '♠', 'A ♥', bidHistory, players, [4, 3, 3, 3], 'bidder',
-    );
-    expect(db._runCalled()).toBe(true);
-    const call = db._calls[0];
-    expect(call.sql).toContain('INSERT INTO game_metadata');
-    expect(call.args[0]).toBe('game-1');
-    expect(call.args[8]).toBe('bidder');
+    const c = buildCompletion(finishedState({ isPractice: true }), { kind: 'completed', bidderWon: false }, null);
+    await persistGameLog(db, c);
+    const metadata = db._calls[db._calls.length - 1];
+    expect(metadata.args[8]).toBe('opponents');
+    expect(metadata.args[10]).toBe(1);
   });
 });

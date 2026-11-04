@@ -4,12 +4,13 @@ import { NUM_PLAYERS, MAX_BID, CARD_SUITS, BID_SUITS } from './types';
 import { generateHands, getBidFromNum, getNumFromBid, getValidSuits, compareCards, getNumFromValue } from './bridge';
 import { getGodBotBid, getGodBotPartnerCard, getGodBotCard } from './god-bot';
 import type { ClientMessage, ServerMessage } from './protocol';
-import { recordGameResult, getWinnerSeats } from './stats';
-import { getUser, recordGroupResult } from './db';
+import { getUser } from './db';
 import { sendMessage, isChatMember } from './telegram';
-import { recordGameStats, recordEloUpdate, type EloResult } from './stats-db';
-import { insertGameHands, updateGameFinalHands, insertGameTricks, insertGameMetadata } from './game-logging';
+import { persistRatedResult } from './stats-db';
+import { insertGameHands, persistGameLog } from './game-logging';
 import { settleBetsAndUpdateElo } from './betting-db';
+import { buildCompletion, completionDone, completionMessage, effectiveTelegramId, type BridgeCompletion, type CompletionOutcome, type RatingSnapshot } from './bridge-completion';
+import { isMissingTableError, persistShadow, readRatingSnapshot } from './rating-db';
 import { CHAT_HISTORY_KEY, createChatHistory, readChatHistory, appendRoomMessage } from './chat-history';
 import { normalizePlayerName, repairRoomNames } from './player-name';
 
@@ -17,10 +18,20 @@ interface SessionInfo {
   playerId: string;
 }
 
+// Finished hands waiting for D1/Telegram, saved atomically with the final state.
+const COMPLETIONS_KEY = 'completions';
+// Ratings read when the current hand was dealt ({ gameId, ... }); kept out of
+// 'state' so a concurrent state save cannot drop it.
+const SNAPSHOT_KEY = 'ratingSnapshot';
+const COMPLETION_RETRY_MS = 60_000;
+const COMPLETION_RETRY_MAX_MS = 30 * 60_000;
+// The shadow rating is a trial: stop retrying a hand after this many failures.
+const SHADOW_MAX_ATTEMPTS = 10;
+
 export class GameRoom extends DurableObject {
   sessions: Map<WebSocket, SessionInfo>;
   private botActionRunning = false;
-  private gameEndProcessed = new Set<string>();
+  private completionWork: Promise<void> = Promise.resolve();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -103,6 +114,7 @@ export class GameRoom extends DurableObject {
         }
         server.send(JSON.stringify(this.buildStateMessage(state, playerId)));
       }
+      this.ctx.waitUntil(this.drainCompletions());
 
       return new Response(null, { status: 101, webSocket: client });
     }
@@ -249,6 +261,13 @@ export class GameRoom extends DurableObject {
   }
 
   async alarm(): Promise<void> {
+    // Every alarm (countdown, bot takeover, vote, cleanup or retry) first retries due results.
+    await this.drainCompletions();
+    await this.runRoomAlarm();
+    await this.ensureCompletionAlarm();
+  }
+
+  private async runRoomAlarm(): Promise<void> {
     const state = await this.getState();
     if (!state) return;
 
@@ -291,6 +310,7 @@ export class GameRoom extends DurableObject {
           player.isBot = true;
           player.botLevel = 'sophisticated';
           player.originalPlayerId = originalPlayerId;
+          state.replacedSeats = [...new Set([...(state.replacedSeats ?? []), seat])];
           delete state.disconnectTimers[seat];
           await this.persistChat(state, 'System', -1, `${originalPlayerName} was away for 90 seconds and has been replaced by a bot.`);
           // Tag the replaced player in Telegram so they know
@@ -365,6 +385,8 @@ export class GameRoom extends DurableObject {
     // Inactivity cleanup alarm
     const anyConnected = state.players.some((p) => p.connected);
     if (!anyConnected) {
+      // Keep the room until every finished hand's results have been persisted.
+      if (await this.hasPendingCompletions()) return;
       await this.ctx.storage.deleteAll();
     }
   }
@@ -421,13 +443,125 @@ export class GameRoom extends DurableObject {
     await this.ctx.storage.put('state', state);
   }
 
-  /** Returns true if game_records already has rows for this gameId (idempotency guard). */
-  private async isGameAlreadyRecorded(gameId: string): Promise<boolean> {
-    const row = await (this.env as Env).DB
-      .prepare('SELECT 1 FROM game_records WHERE game_id = ? LIMIT 1')
-      .bind(gameId)
-      .first();
-    return !!row;
+  // --- Durable hand completion ---
+
+  /**
+   * Saves a finished or abandoned hand's state together with its completion record,
+   * before any D1 or Telegram I/O, so results survive failures and restarts.
+   */
+  private async saveStateWithCompletion(state: GameState, outcome: CompletionOutcome): Promise<void> {
+    const snapshot = (await this.ctx.storage.get<RatingSnapshot>(SNAPSHOT_KEY)) ?? null;
+    const completion = buildCompletion(state, outcome, snapshot);
+    const pending = (await this.ctx.storage.get<BridgeCompletion[]>(COMPLETIONS_KEY)) ?? [];
+    if (!pending.some((c) => c.gameId === completion.gameId)) pending.push(completion);
+    await this.ctx.storage.put({ state, [COMPLETIONS_KEY]: pending });
+  }
+
+  private async hasPendingCompletions(): Promise<boolean> {
+    return ((await this.ctx.storage.get<BridgeCompletion[]>(COMPLETIONS_KEY)) ?? []).length > 0;
+  }
+
+  /** Persists due completions; overlapping calls run one after another. Never rejects. */
+  private drainCompletions(): Promise<void> {
+    this.completionWork = this.completionWork
+      .then(() => this.drainDueCompletions())
+      .catch((err) => console.error('Bridge completion drain failed', err));
+    return this.completionWork;
+  }
+
+  private async drainDueCompletions(): Promise<void> {
+    const pending = (await this.ctx.storage.get<BridgeCompletion[]>(COMPLETIONS_KEY)) ?? [];
+    for (const entry of pending) {
+      if (entry.nextAttemptAt > Date.now()) continue;
+      if (!(await this.runCompletionSteps(entry))) {
+        entry.attempts++;
+        entry.nextAttemptAt = Date.now() + Math.min(COMPLETION_RETRY_MS * 2 ** (entry.attempts - 1), COMPLETION_RETRY_MAX_MS);
+      }
+      // Re-read so a completion queued while D1 was busy is kept.
+      const latest = ((await this.ctx.storage.get<BridgeCompletion[]>(COMPLETIONS_KEY)) ?? [])
+        .filter((c) => c.gameId !== entry.gameId);
+      if (!completionDone(entry)) latest.push(entry);
+      if (latest.length > 0) await this.ctx.storage.put(COMPLETIONS_KEY, latest);
+      else await this.ctx.storage.delete(COMPLETIONS_KEY);
+    }
+    await this.ensureCompletionAlarm();
+  }
+
+  /** Runs each outstanding step once. Returns false if a step must be retried. */
+  private async runCompletionSteps(c: BridgeCompletion): Promise<boolean> {
+    const env = this.env as Env;
+    let ok = true;
+    if (!c.steps.rated) {
+      try {
+        c.legacy = (await persistRatedResult(env.DB, c)).elo;
+        c.steps.rated = true;
+      } catch (err) {
+        ok = false;
+        console.error('Bridge rated result not saved; will retry', c.gameId, err);
+      }
+    }
+    if (c.steps.rated && !c.steps.notify) {
+      c.steps.notify = true; // best effort, as before: never re-sent
+      if (c.groupId) this.ctx.waitUntil(sendMessage(env.TELEGRAM_BOT_TOKEN, c.groupId, completionMessage(c)));
+    }
+    if (!c.steps.log) {
+      try {
+        await persistGameLog(env.DB, c);
+        c.steps.log = true;
+      } catch (err) {
+        ok = false;
+        console.error('Bridge game log not saved; will retry', c.gameId, err);
+      }
+    }
+    if (!c.steps.betting) {
+      try {
+        await settleBetsAndUpdateElo(env.DB, c.gameId, c.bidderWon === true);
+        c.steps.betting = true;
+      } catch (err) {
+        ok = false;
+        console.error('Bridge bets not settled; will retry', c.gameId, err);
+      }
+    }
+    // The shadow trial compares against the legacy Elo, so it waits for the rated step.
+    if (c.steps.rated && !c.steps.shadow) {
+      try {
+        await persistShadow(env.DB, c);
+        c.steps.shadow = true;
+      } catch (err) {
+        c.shadowAttempts++;
+        if (isMissingTableError(err) || c.shadowAttempts >= SHADOW_MAX_ATTEMPTS) {
+          c.steps.shadow = true;
+          console.warn('Bridge shadow rating skipped for this hand', c.gameId, err);
+        } else {
+          ok = false;
+          console.error('Bridge shadow rating not saved; will retry', c.gameId, err);
+        }
+      }
+    }
+    return ok;
+  }
+
+  /**
+   * Arms a retry alarm only when no room alarm is set. An existing alarm is never
+   * moved (it may be a countdown, bot takeover or vote); it drains on firing anyway.
+   */
+  private async ensureCompletionAlarm(): Promise<void> {
+    const pending = (await this.ctx.storage.get<BridgeCompletion[]>(COMPLETIONS_KEY)) ?? [];
+    if (pending.length === 0) return;
+    if ((await this.ctx.storage.getAlarm()) !== null) return;
+    const due = Math.min(...pending.map((c) => c.nextAttemptAt));
+    await this.ctx.storage.setAlarm(Math.max(Date.now() + 1000, due));
+  }
+
+  /** Reads the dealt hand's starting ratings and stores them beside the room state. */
+  private async captureRatingSnapshot(gameId: string, seats: { telegramId: number | null }[]): Promise<void> {
+    try {
+      const snapshot = await readRatingSnapshot((this.env as Env).DB, gameId, seats);
+      const state = await this.getState();
+      if (state?.gameId === gameId) await this.ctx.storage.put(SNAPSHOT_KEY, snapshot);
+    } catch (err) {
+      console.warn('Bridge rating snapshot unavailable', gameId, err);
+    }
   }
 
   private buildStateMessage(state: GameState, playerId: string): ServerMessage {
@@ -748,17 +882,7 @@ export class GameRoom extends DurableObject {
     state.turn = (state.turn + 1) % NUM_PLAYERS;
 
     if (state.passCount === NUM_PLAYERS && state.bidder < 0) {
-      // All passed without any bid -- redeal
-      state.hands = generateHands();
-      state.turn = state.firstBidder;
-      state.bid = -1;
-      state.bidder = -1;
-      state.passCount = 0;
-      state.bidHistory = [];
-      await this.saveState(state);
-
-      this.broadcast({ type: 'allPassed' });
-      this.broadcastFullState(state);
+      await this.redealAfterAllPass(state);
       return;
     }
 
@@ -770,19 +894,39 @@ export class GameRoom extends DurableObject {
     }
   }
 
+  /**
+   * Everyone passed without a bid: deal again. The new deal replaces the recorded
+   * starting hands so recaps, replays, move ratings and deal features match the
+   * cards actually played.
+   */
+  private async redealAfterAllPass(state: GameState): Promise<void> {
+    state.hands = generateHands();
+    state.initialHands = state.hands.map((h) => ({
+      '♣': [...h['♣']],
+      '♦': [...h['♦']],
+      '♥': [...h['♥']],
+      '♠': [...h['♠']],
+    }));
+    state.redealCount = (state.redealCount ?? 0) + 1;
+    state.turn = state.firstBidder;
+    state.bid = -1;
+    state.bidder = -1;
+    state.passCount = 0;
+    state.bidHistory = [];
+    await this.saveState(state);
+    this.ctx.waitUntil(
+      insertGameHands((this.env as Env).DB, state.gameId, state.players, state.hands)
+        .catch(() => {}),
+    );
+
+    this.broadcast({ type: 'allPassed' });
+    this.broadcastFullState(state);
+  }
+
   private async finalizeBidding(state: GameState): Promise<void> {
     if (state.bidder < 0) {
       // Everyone passed with no bid -- redeal
-      state.hands = generateHands();
-      state.turn = state.firstBidder;
-      state.bid = -1;
-      state.bidder = -1;
-      state.passCount = 0;
-      state.bidHistory = [];
-      await this.saveState(state);
-
-      this.broadcast({ type: 'allPassed' });
-      this.broadcastFullState(state);
+      await this.redealAfterAllPass(state);
       return;
     }
 
@@ -986,8 +1130,6 @@ export class GameRoom extends DurableObject {
         trickCards: [...state.lastTrick.cards],
       });
 
-      const isPracticeGame = state.isPractice; // snapshotted at deal start — not recomputed mid-game
-
       if (bidderSets >= state.setsNeeded) {
         state.phase = 'gameover';
         state.readySeats = [];
@@ -1002,84 +1144,10 @@ export class GameRoom extends DurableObject {
           winnerNames,
         });
 
-        // Idempotency guard: in-memory Set prevents same-instance races (synchronous, no TOCTOU),
-        // D1 check prevents duplicate processing across DO eviction/wake cycles
-        if (!this.gameEndProcessed.has(state.gameId)) {
-          this.gameEndProcessed.add(state.gameId);
-          const alreadyRecorded = await this.isGameAlreadyRecorded(state.gameId);
-          if (!alreadyRecorded) {
-            if (!isPracticeGame) await recordGameResult(
-              (this.env as Env).DB,
-              state.players,
-              getWinnerSeats(bidder, partner, true),
-            );
-
-            let eloResults: EloResult[] = [];
-            if (!isPracticeGame) {
-              await recordGameStats(
-                (this.env as Env).DB,
-                state.gameId,
-                state.groupId,
-                state.players,
-                bidder,
-                partner,
-                state.bid,
-                state.sets,
-                getWinnerSeats(bidder, partner, true),
-              );
-
-              eloResults = await recordEloUpdate(
-                (this.env as Env).DB,
-                state.gameId,
-                state.players,
-                bidder,
-                partner,
-                getWinnerSeats(bidder, partner, true),
-              );
-            }
-
-            if (state.groupId) {
-              const bidStr = getBidFromNum(state.bid);
-              const eloLines = eloResults.length > 0
-                ? '\n' + eloResults.map((r) => `  ${r.name}: ${r.delta >= 0 ? '+' : ''}${r.delta} → ${r.eloAfter}`).join('\n')
-                : '';
-              sendMessage(
-                (this.env as Env).TELEGRAM_BOT_TOKEN,
-                state.groupId,
-                `🏆 ${winnerNames.join(' & ')} won!\nBid ${bidStr}, made ${bidderSets}/${state.setsNeeded} tricks${isPracticeGame ? '\n(practice — unrated)' : eloLines}`,
-              ).catch(() => {});
-              if (!isPracticeGame) await recordGroupResult(
-                (this.env as Env).DB,
-                state.groupId,
-                state.players,
-                getWinnerSeats(bidder, partner, true),
-              );
-            }
-
-            this.ctx.waitUntil(
-              Promise.all([
-                updateGameFinalHands((this.env as Env).DB, state.gameId, state.players, state.hands),
-                insertGameTricks((this.env as Env).DB, state.gameId, state.trickLog),
-                insertGameMetadata(
-                  (this.env as Env).DB,
-                  state.gameId,
-                  bidder,
-                  state.bid,
-                  state.trumpSuit,
-                  state.partnerCard ?? '',
-                  state.bidHistory,
-                  state.players,
-                  state.sets,
-                  'bidder',
-                  isPracticeGame,
-                ),
-                settleBetsAndUpdateElo((this.env as Env).DB, state.gameId, true),
-              ]).catch(() => {}),
-            );
-          }
-        }
-
-        await this.saveState(state);
+        // Save the result with the final state before any D1 or Telegram I/O, then persist
+        // it before the final state goes out so the client's Elo lookup finds it.
+        await this.saveStateWithCompletion(state, { kind: 'completed', bidderWon: true });
+        await this.drainCompletions();
         this.broadcastFullState(state);
         return;
       }
@@ -1097,83 +1165,10 @@ export class GameRoom extends DurableObject {
           winnerNames,
         });
 
-        // Idempotency guard (same as bidder-win block above)
-        if (!this.gameEndProcessed.has(state.gameId)) {
-          this.gameEndProcessed.add(state.gameId);
-          const alreadyRecorded = await this.isGameAlreadyRecorded(state.gameId);
-          if (!alreadyRecorded) {
-            if (!isPracticeGame) await recordGameResult(
-              (this.env as Env).DB,
-              state.players,
-              getWinnerSeats(bidder, partner, false),
-            );
-
-            let eloResults: EloResult[] = [];
-            if (!isPracticeGame) {
-              await recordGameStats(
-                (this.env as Env).DB,
-                state.gameId,
-                state.groupId,
-                state.players,
-                bidder,
-                partner,
-                state.bid,
-                state.sets,
-                getWinnerSeats(bidder, partner, false),
-              );
-
-              eloResults = await recordEloUpdate(
-                (this.env as Env).DB,
-                state.gameId,
-                state.players,
-                bidder,
-                partner,
-                getWinnerSeats(bidder, partner, false),
-              );
-            }
-
-            if (state.groupId) {
-              const bidStr = getBidFromNum(state.bid);
-              const eloLines = eloResults.length > 0
-                ? '\n' + eloResults.map((r) => `  ${r.name}: ${r.delta >= 0 ? '+' : ''}${r.delta} → ${r.eloAfter}`).join('\n')
-                : '';
-              sendMessage(
-                (this.env as Env).TELEGRAM_BOT_TOKEN,
-                state.groupId,
-                `🛡️ ${winnerNames.join(' & ')} defended!\n${state.players[bidder].name}'s ${bidStr} bid failed${isPracticeGame ? '\n(practice — unrated)' : eloLines}`,
-              ).catch(() => {});
-              if (!isPracticeGame) await recordGroupResult(
-                (this.env as Env).DB,
-                state.groupId,
-                state.players,
-                getWinnerSeats(bidder, partner, false),
-              );
-            }
-
-            this.ctx.waitUntil(
-              Promise.all([
-                updateGameFinalHands((this.env as Env).DB, state.gameId, state.players, state.hands),
-                insertGameTricks((this.env as Env).DB, state.gameId, state.trickLog),
-                insertGameMetadata(
-                  (this.env as Env).DB,
-                  state.gameId,
-                  bidder,
-                  state.bid,
-                  state.trumpSuit,
-                  state.partnerCard ?? '',
-                  state.bidHistory,
-                  state.players,
-                  state.sets,
-                  'opponents',
-                  isPracticeGame,
-                ),
-                settleBetsAndUpdateElo((this.env as Env).DB, state.gameId, false),
-              ]).catch(() => {}),
-            );
-          }
-        }
-
-        await this.saveState(state);
+        // Save the result with the final state before any D1 or Telegram I/O, then persist
+        // it before the final state goes out so the client's Elo lookup finds it.
+        await this.saveStateWithCompletion(state, { kind: 'completed', bidderWon: false });
+        await this.drainCompletions();
         this.broadcastFullState(state);
         return;
       }
@@ -2616,6 +2611,11 @@ export class GameRoom extends DurableObject {
     state.trickLog = [];
     state.trickWinners = [];
     state.isPractice = state.players.filter((p) => p.isBot).length >= 2; // snapshot at deal start
+    state.redealCount = 0;
+    state.replacedSeats = [];
+    // A bot still covering a player who left an earlier hand is a bot for this hand:
+    // the absent player is not rated for it (they can still reclaim the seat).
+    state.dealtBotSeats = state.players.filter((p) => p.isBot).map((p) => p.seat);
     state.initialHands = state.hands.map((h) => ({
       '♣': [...h['♣']],
       '♦': [...h['♦']],
@@ -2627,6 +2627,10 @@ export class GameRoom extends DurableObject {
       insertGameHands((this.env as Env).DB, state.gameId, state.players, state.hands)
         .catch(() => {}),
     );
+    this.ctx.waitUntil(this.captureRatingSnapshot(
+      state.gameId,
+      state.players.map((p) => ({ telegramId: p.isBot ? null : effectiveTelegramId(p) })),
+    ));
     this.broadcast({ type: 'gameStart', turn: state.firstBidder });
     this.broadcastFullState(state);
     if (state.groupId) {
@@ -3029,10 +3033,11 @@ export class GameRoom extends DurableObject {
   }
 
   private async endGameWithAbandon(state: GameState): Promise<void> {
-    // Hand is void — no Elo recorded, just return to lobby
+    // Hand is void — no Elo recorded, just return to lobby. The abandoned deal is
+    // still logged for the rating trial (selective-quitting checks).
     state.phase = 'lobby';
     state.readySeats = [];
-    await this.saveState(state);
+    await this.saveStateWithCompletion(state, { kind: 'abandoned' });
 
     this.broadcast({
       type: 'abandonVotePassed',
@@ -3040,6 +3045,7 @@ export class GameRoom extends DurableObject {
 
     // Send updated state to all clients
     this.broadcastFullState(state);
+    this.ctx.waitUntil(this.drainCompletions());
   }
 
   private async handleStartGame(state: GameState, requestorId: string): Promise<void> {
