@@ -144,6 +144,12 @@ export class GameRoom extends DurableObject {
     }
 
     switch (msg.type) {
+      case 'sync':
+        if (!Number.isSafeInteger(msg.requestId) || msg.requestId < 0) return;
+        // Read-only recovery: use the same private player/spectator view as a
+        // broadcast, without rejoining, changing seats or repeating actions.
+        ws.send(JSON.stringify({ ...this.buildStateMessage(state, session.playerId), requestId: msg.requestId }));
+        break;
       case 'join':
         await this.handleJoin(state, session.playerId, msg.name, msg.joinAs, ws);
         if (state.players.some(p => p.id === session.playerId) || state.spectators.some(s => s.id === session.playerId)) {
