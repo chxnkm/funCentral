@@ -48,6 +48,7 @@ The final repeat is the hand-layout suite, not every browser test in 2.5D.
 | Bridge completion persistence | `tests/bridge-persistence.test.ts` with `bridge-persistence-harness.ts` (real Miniflare/workerd and D1): a finished hand recorded once across legacy stats, group stats, replay log, rating trial and one group post; a failed rated transaction rolling back and retrying once after restart; committed hands not reapplied; concurrent hands adding Elo for a shared player; Bridge without migration `0013`; the all-pass redeal hand log; abandoned hands. `tests/bridge-rating-queries.test.ts` runs every documented trial query and the Season 1 close statements. `tests/bridge-season-2.test.ts`: Season 2 hands rated fresh without touching Season 1 tables, boards/stats/rating changes per season, leavers charged, a missing snapshot rated from current ratings, bot-dealt hands unrated, and the season assigned at the deal |
 | Bridge seasons live E2E | `tests/ui/bridge-seasons.pw.js` with the clock pinned inside Season 2 (`TEST_NOW_MS`, dev-only): fresh Season 2 board with provisional markers, the Season 1 final board through the card's season switch and the stats screen's season menu, and the bot's season-named group board, at desktop and 390px mobile emulation |
 | Bridge live game E2E | Local Worker + SQLite Durable Object + actual WebSockets: four-player create/join, bid/pass, partner selection, legal mouse/touch play until the contract resolves, keyboard illegality guards, results, refresh/reconnect and live view switching |
+| Bridge live update recovery | `tests/bridge-sync.test.ts` checks timeouts, foreground/network wakeups, correlated snapshots, input locks, pending-card recovery and private read-only views. `tests/ui/bridge-sync.pw.js` runs real four-player deals in Classic/2.5D, suppresses selected incoming state broadcasts while a legal card is played, and verifies periodic recovery on the same open socket. It also blackholes an open connection, verifies automatic replacement and late-frame rejection, refreshes on page return, and checks intentional leave cancels recovery. Uses real local Worker/auth/SQLite/WebSockets with controlled browser transport faults and time; this is not production network or physical-device evidence. |
 | Bridge creator regression | A creator with stale spectator state is seated as a player; leaving spectator mode does not contaminate the next created room, including reload/reconnect |
 | Identity live E2E | Real profile endpoints, database, signed synthetic auth and WebSockets: name recovery, delayed/stale responses, invalid credentials, reconnect/session replacement |
 | Tai Di persistence | Eight regressions in `tests/taidi-persistence.test.ts` (harness `taidi-persistence-harness.ts`): real Miniflare D1 completion, idempotent repeats, rollback on late failures, overlapping duplicates, additive cross-game ratings, tied places and leaderboard/stats/group boards |
@@ -61,6 +62,11 @@ The final repeat is the hand-layout suite, not every browser test in 2.5D.
 | Real local chat | Two browser clients, desktop/mobile, composer send, reconnect replay, order, duplicate joins, empty messages, latest 50, room changes and delayed old-socket frames |
 | Browser input / layout | Classic/2.5D, CDP dragging on a scrollable page, finger attachment and damped swing, felt-edge hit testing, single table drop, hand/outside return, pending/illegal/out-of-turn guards, cancellation, resize/blur/scroll, reconnect while dragging, stable hand DOM, typography, keyboard focus, reduced motion and responsive lobby actions |
 | Chat fixtures | Snapshot/live races, duplicate replay, scroll position while trimming, newest-message following, long names/text, IME/repeat/offline drafts and synthetic captures; these are not live-server evidence |
+
+Bridge's recovery suite also opens two clients with the same verified identity:
+the displaced client stays paused through timer and foreground/network events,
+can explicitly choose **Reconnect here**, and retains its seat without starting
+a replacement loop. Ordinary network failures still reconnect automatically.
 
 The persistence harness uses real local D1 SQL and room code, with test-only
 inspection/retry hooks and controlled I/O timing; it is not a full browser
@@ -96,6 +102,7 @@ the `newgame`/`leaderboard`/`help` command menu. Static hub tiles and the typed
 | 4223 | Live Worker without Tai Di tables |
 | 4230 | Telegram chooser/live webhook with outbound capture (replaces the earlier suite's 4220) |
 | 4232 | Bridge seasons live Worker (clock pinned inside Season 2) |
+| 4234 | Bridge live update recovery Worker |
 
 Keep these ports free and run one suite at a time. `tests/ui/live-worker.cjs`
 bundles the current checked-out Worker and assets, binds both room classes,

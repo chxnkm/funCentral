@@ -3,6 +3,7 @@ import type { ChatEntry, ChatHistory } from './chat-history';
 
 export type ClientMessage =
   | { type: 'join'; name: string; joinAs?: 'player' | 'spectator' }
+  | { type: 'sync'; requestId: number }
   | { type: 'bid'; bidNum: number }
   | { type: 'pass' }
   | { type: 'selectPartner'; card: string }
@@ -22,7 +23,7 @@ export type ClientMessage =
   | { type: 'respondAbandon'; accept: boolean };
 
 export type ServerMessage =
-  | { type: 'state'; state: PlayerGameView }
+  | { type: 'state'; state: PlayerGameView; requestId?: number }
   | { type: 'error'; message: string; code?: 'NAME_REQUIRED' }
   | { type: 'joined'; playerName: string; seat: number; playerCount: number }
   | { type: 'gameStart'; turn: number }
