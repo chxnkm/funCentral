@@ -63,6 +63,11 @@ The final repeat is the hand-layout suite, not every browser test in 2.5D.
 | Browser input / layout | Classic/2.5D, CDP dragging on a scrollable page, finger attachment and damped swing, felt-edge hit testing, single table drop, hand/outside return, pending/illegal/out-of-turn guards, cancellation, resize/blur/scroll, reconnect while dragging, stable hand DOM, typography, keyboard focus, reduced motion and responsive lobby actions |
 | Chat fixtures | Snapshot/live races, duplicate replay, scroll position while trimming, newest-message following, long names/text, IME/repeat/offline drafts and synthetic captures; these are not live-server evidence |
 
+Bridge's recovery suite also opens two clients with the same verified identity:
+the displaced client stays paused through timer and foreground/network events,
+can explicitly choose **Reconnect here**, and retains its seat without starting
+a replacement loop. Ordinary network failures still reconnect automatically.
+
 The persistence harness uses real local D1 SQL and room code, with test-only
 inspection/retry hooks and controlled I/O timing; it is not a full browser
 journey. Regicide's targeted rule scenarios use a fixed seed and dev-only

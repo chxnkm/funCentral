@@ -12,6 +12,41 @@ async function room() {
   return (await response.json()).roomCode;
 }
 
+test('two tabs with the same identity do not repeatedly replace each other', async ({ browser }) => {
+  const code = await room();
+  const a = await client(browser, code, 'Same Bridge player', 'classic', true);
+  let b;
+  try {
+    await a.page.clock.pauseAt(new Date(Date.now() + 1000));
+    b = await client(browser, code, 'Same Bridge player', 'classic');
+    await expect.poll(() => a.page.evaluate(() => ws === null)).toBe(true);
+    expect(await a.page.evaluate(() => playerId)).toBe(await b.page.evaluate(() => playerId));
+    await a.page.clock.fastForward(60000);
+    // The displaced tab must stay paused rather than evicting the new tab.
+    expect(await a.page.evaluate(() => sentFrames.filter(msg => msg.type === 'join').length)).toBe(1);
+    expect(await b.page.evaluate(() => ws?.readyState === WebSocket.OPEN && !awaitingGameState)).toBe(true);
+    await a.page.evaluate(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      for (const name of ['focus', 'online', 'pageshow']) window.dispatchEvent(new Event(name));
+    });
+    expect(await a.page.evaluate(() => ws)).toBeNull();
+    await expect(a.page.locator('#reconnect-status')).toHaveText('This game is active in another tab or browser.');
+    await a.page.screenshot({ path: test.info().outputPath('session-replaced-mobile.png'), animations: 'disabled' });
+    await a.page.getByRole('button', { name: 'Reconnect here', exact: true }).click();
+    await expect.poll(() => a.page.evaluate(() => ws?.readyState === WebSocket.OPEN && !awaitingGameState)).toBe(true);
+    await expect.poll(() => b.page.evaluate(() => ws === null)).toBe(true);
+    expect(await a.page.evaluate(() => gameState.players.length)).toBe(1);
+    expect(await a.page.evaluate(() => sentFrames.filter(msg => msg.type === 'join').length)).toBe(2);
+    // Taking the game back is explicit and retains the same seat, without
+    // causing the displaced second tab to fight back on its next foreground.
+    await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    expect(await b.page.evaluate(() => ws)).toBeNull();
+    await b.page.getByRole('button', { name: 'Leave room', exact: true }).click();
+    await expect(b.page.locator('#screen-home')).toBeVisible();
+    expect(a.errors).toEqual([]); expect(b.errors).toEqual([]);
+  } finally { await a.context.close(); await b?.context.close(); }
+});
+
 async function client(browser, code, name, mode, mobile = false) {
   const login = await fetch(`${worker.origin}/api/auth/dev`, { method: 'POST', body: JSON.stringify({ displayName: name }) });
   expect(login.ok).toBe(true);

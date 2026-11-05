@@ -12,6 +12,17 @@ function browserFixture() {
   const sockets: any[] = [];
   const events: Record<string, () => void> = {};
   const overlay = new Set(['hidden']);
+  const elements: Record<string, any> = {};
+  const element = (id: string) => {
+    if (!elements[id]) {
+      const classes = id === 'overlay-reconnect' ? overlay : new Set();
+      elements[id] = { focus: vi.fn(), classList: {
+        add: (name: string) => classes.add(name), remove: (name: string) => classes.delete(name),
+        toggle: (name: string, enabled: boolean) => enabled ? classes.add(name) : classes.delete(name),
+      } };
+    }
+    return elements[id];
+  };
   class Socket {
     static OPEN = 1;
     static CONNECTING = 0;
@@ -30,14 +41,14 @@ function browserFixture() {
     WebSocket: Socket, Date, setTimeout, clearTimeout, setInterval, clearInterval,
     ws: null, roomCode: 'LOCAL', playerId: 'tg_1', playerName: 'Alice',
     identityReady: true, identityNeedsLogin: false, authToken: null, joinAs: null,
-    reconnectTimer: null, reconnectDelay: 2000, connectionWatchdog: null,
+    reconnectTimer: null, reconnectDelay: 2000, connectionWatchdog: null, connectionReplaced: false,
     gameState: null, pendingPlay: null, awaitingGameState: true,
     normalizePlayerName: (name: string) => name, requestPlayerName: vi.fn(),
     CardHand: { cancelAll: vi.fn() }, renderState: vi.fn(),
     location: { protocol: 'http:', host: 'localhost' },
     document: { hidden: false, addEventListener: (name: string, fn: () => void) => { events[name] = fn; } },
     window: { addEventListener: (name: string, fn: () => void) => { events[name] = fn; } },
-    $: () => ({ classList: { add: (name: string) => overlay.add(name), remove: (name: string) => overlay.delete(name) } }),
+    $: element,
   });
   context.handleMessage = vi.fn((msg: any) => {
     if (msg.type === 'state') { context.gameState = msg.state; context.awaitingGameState = false; }
@@ -53,6 +64,32 @@ function browserFixture() {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
 describe('Bridge connection recovery', () => {
+  it('pauses deliberate session replacement until the player explicitly takes it back', () => {
+    const { context, socket, ready, sockets, events, overlay } = browserFixture(); ready();
+    socket.onclose({ code: 1000, reason: 'Replaced by new connection' });
+    expect(context.connectionReplaced).toBe(true);
+    expect(context.ws).toBeNull();
+    expect(overlay.has('hidden')).toBe(false);
+    vi.advanceTimersByTime(60000);
+    for (const event of Object.values(events)) event();
+    context.connect();
+    expect(sockets).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+    context.reconnectHere();
+    expect(sockets).toHaveLength(2);
+    expect(context.connectionReplaced).toBe(false);
+    sockets[1].open(); sockets[1].receive({ type: 'state', state: { turn: 1 } });
+    expect(overlay.has('hidden')).toBe(true);
+  });
+
+  it('still reconnects normally after a server close that is not a session replacement', () => {
+    const { context, socket, ready, sockets } = browserFixture(); ready();
+    socket.onclose({ code: 1000, reason: 'Server restarting' });
+    vi.advanceTimersByTime(2000);
+    expect(context.connectionReplaced).toBe(false);
+    expect(sockets).toHaveLength(2);
+  });
+
   it.each([false, true])('replaces a connection that never supplies its first state (open=%s)', open => {
     const { context, socket, sockets, overlay } = browserFixture();
     if (open) socket.open();
