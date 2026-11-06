@@ -55,7 +55,12 @@ test('a winning result above an open rules modal traps focus and restores each l
     await expect(host.locator('#btn-rules')).toBeFocused();
     expect(await host.locator('#top-bar').evaluate((node) => node.inert)).toBe(false);
     await host.getByRole('button', { name: 'View results', exact: true }).tap();
-    await host.locator('#btn-again').tap();
+    // Either player can return everyone to the lobby. The seated non-host
+    // has no Start Game or Take a Seat button to receive restored focus.
+    await guest.locator('#btn-again').tap();
     await expect(host.locator('#screen-lobby')).toHaveClass(/active/);
+    await expect(guest.locator('#screen-lobby')).toHaveClass(/active/);
+    await expect(host.locator('#btn-start')).toBeFocused();
+    await expect(guest.locator('#btn-rules-lobby')).toBeFocused();
   } finally { for (const context of contexts) await context.close(); }
 });

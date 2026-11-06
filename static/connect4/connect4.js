@@ -711,7 +711,7 @@ function hideModal(id) {
     const target = entry?.returnFocus;
     if (target?.isConnected && target.matches('button, a[href], input, select, textarea, [tabindex]') &&
         !target.disabled && target.getClientRects().length) target.focus({ preventScroll: true });
-    else for (const id of ['btn-results', 'btn-start', 'btn-take-seat', 'btn-rules-home']) {
+    else for (const id of ['btn-results', 'btn-start', 'btn-take-seat', 'btn-rules-lobby', 'btn-rules-home']) {
       const fallback = $(id);
       if (fallback.getClientRects().length && !fallback.disabled) { fallback.focus({ preventScroll: true }); break; }
     }

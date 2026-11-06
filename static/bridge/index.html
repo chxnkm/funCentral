@@ -45,8 +45,12 @@
   <!-- Reconnecting overlay -->
   <div id="overlay-reconnect" class="overlay hidden">
     <div class="overlay-content">
-      <div class="spinner"></div>
-      <p>Reconnecting...</p>
+      <div id="reconnect-spinner" class="spinner"></div>
+      <p id="reconnect-status" aria-live="polite">Reconnecting...</p>
+      <div id="reconnect-actions" class="hidden">
+        <button id="btn-reconnect-here" type="button" class="btn btn-primary" onclick="reconnectHere()">Reconnect here</button>
+        <button type="button" class="btn btn-secondary" onclick="leaveGame()">Leave room</button>
+      </div>
     </div>
   </div>
 

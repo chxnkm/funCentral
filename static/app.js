@@ -37,6 +37,8 @@ let roomCodeFromHash = hashInfo.room ? true : false;  // Track if room came from
 let joinAs = null;  // 'player' or 'spectator' for joining via invite
 let reconnectTimer = null;
 let reconnectDelay = 2000;
+let connectionWatchdog = null;
+let connectionReplaced = false;
 let gameState = null;
 let pendingPlay = null;
 let awaitingGameState = true;
@@ -857,6 +859,7 @@ function useVerifiedProfile(profile) {
   if (Number.isSafeInteger(profile.telegramId) && profile.telegramId > 0) {
     const verifiedId = `tg_${profile.telegramId}`;
     if (playerId !== verifiedId && ws) {
+      stopConnectionWatchdog();
       ws.onclose = null; ws.close(); ws = null;
       gameState = null; pendingPlay = null; awaitingGameState = true;
     }
@@ -871,6 +874,7 @@ function useVerifiedProfile(profile) {
 
 function requestPlayerName() {
   clearTimeout(reconnectTimer);
+  stopConnectionWatchdog();
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
   playerName = '';
   showScreen('screen-home');
@@ -1186,14 +1190,99 @@ function getSuitClass(suit) {
 }
 
 // --- WebSocket ---
+const ROOM_SYNC_INTERVAL_MS = 15000;
+const ROOM_SYNC_TIMEOUT_MS = 10000;
+
+function stopConnectionWatchdog() {
+  connectionWatchdog?.stop();
+  connectionWatchdog = null;
+}
+
+function setReconnectMode(replaced) {
+  $('reconnect-status').textContent = replaced
+    ? 'This game is active in another tab or browser.' : 'Reconnecting...';
+  $('reconnect-actions').classList.toggle('hidden', !replaced);
+  $('reconnect-spinner').classList.toggle('hidden', replaced);
+}
+
+function reconnectHere() {
+  if (!connectionReplaced || !roomCode) return;
+  connectionReplaced = false;
+  connect();
+}
+
+// OPEN is only a browser-side status: a suspended tab or a broken network can
+// leave it OPEN indefinitely. Require an actual state reply, not just traffic
+// (or a hibernation pong), so a lost broadcast also repairs itself.
+function watchConnection(socket, socketRoom, recover) {
+  let sequence = 0;
+  let pendingSync = null;
+  let playAtSync = null;
+  let requestedAt = 0;
+  let deadline = setTimeout(recover, ROOM_SYNC_TIMEOUT_MS);
+  const current = () => ws === socket && roomCode === socketRoom;
+  const interval = setInterval(() => sync(), ROOM_SYNC_INTERVAL_MS);
+
+  function stop() {
+    clearInterval(interval);
+    clearTimeout(deadline);
+  }
+
+  function sync(blockInput = false) {
+    if (!current()) { stop(); return; }
+    if (document.hidden || socket.readyState !== WebSocket.OPEN) return;
+    if (blockInput) {
+      awaitingGameState = true;
+      pendingPlay = null;
+      CardHand.cancelAll();
+      $('overlay-reconnect').classList.remove('hidden');
+      if (gameState) renderState();
+    }
+    if (pendingSync !== null) {
+      // Timers may have been suspended while the tab/phone was asleep.
+      if (Date.now() - requestedAt >= ROOM_SYNC_TIMEOUT_MS) recover();
+      return;
+    }
+    pendingSync = ++sequence;
+    playAtSync = pendingPlay;
+    requestedAt = Date.now();
+    clearTimeout(deadline);
+    deadline = setTimeout(recover, ROOM_SYNC_TIMEOUT_MS);
+    try { socket.send(JSON.stringify({ type: 'sync', requestId: pendingSync })); }
+    catch { recover(); }
+  }
+
+  function receive(msg) {
+    if (!current()) return false;
+    if (msg.type !== 'state') return true;
+    if (msg.requestId !== undefined) {
+      if (msg.requestId !== pendingSync) return false;
+      pendingSync = null;
+      // A reply after our action is authoritative even if the action was never
+      // accepted. Release the input lock; never automatically replay a move.
+      if (pendingPlay === playAtSync) pendingPlay = null;
+    }
+    if (pendingSync === null) clearTimeout(deadline);
+    reconnectDelay = 2000;
+    $('overlay-reconnect').classList.add('hidden');
+    return true;
+  }
+
+  return { stop, sync, receive };
+}
+
 function connect() {
   if (window.FC_MOVED) return; // this page is forwarding to funcentral.vocs.io (fc-host.js)
+  if (connectionReplaced) return;
   if (!identityReady) return;
   if (identityNeedsLogin) { requestPlayerName(); return; }
   playerName = normalizePlayerName(playerName);
   if (!playerName) { requestPlayerName(); return; }
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   const joinName = playerName;
+  clearTimeout(reconnectTimer);
+  stopConnectionWatchdog();
+  setReconnectMode(false);
 
   // A new socket begins a fresh input session. A card held across reconnect
   // must return to the hand and wait for authoritative state before playing.
@@ -1207,11 +1296,11 @@ function connect() {
   const socket = new WebSocket(`${proto}//${location.host}/api/ws?room=${roomCode}&playerId=${playerId}${tokenParam}`);
   const socketRoom = roomCode;
   ws = socket;
+  const watchdog = watchConnection(socket, socketRoom, () => socket.onclose?.());
+  connectionWatchdog = watchdog;
 
   socket.onopen = () => {
     if (ws !== socket || roomCode !== socketRoom) return;
-    reconnectDelay = 2000;
-    $('overlay-reconnect').classList.add('hidden');
     const joinMsg = { type: 'join', name: joinName };
     if (joinAs) joinMsg.joinAs = joinAs;
     socket.send(JSON.stringify(joinMsg));
@@ -1219,18 +1308,31 @@ function connect() {
 
   socket.onmessage = (e) => {
     if (ws !== socket || roomCode !== socketRoom) return;
-    const msg = JSON.parse(e.data);
-    handleMessage(msg);
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    if (watchdog.receive(msg)) handleMessage(msg);
   };
 
-  socket.onclose = () => {
+  socket.onclose = (event) => {
     if (ws !== socket || roomCode !== socketRoom) return;
+    watchdog.stop();
+    socket.onclose = null;
+    ws = null;
+    try { socket.close(); } catch { /* already closed */ }
     awaitingGameState = true;
     pendingPlay = null;
     CardHand.cancelAll();
     if (roomCode) {
       $('overlay-reconnect').classList.remove('hidden');
       clearTimeout(reconnectTimer);
+      if (event?.code === 1000 && event.reason === 'Replaced by new connection') {
+        // Another tab/browser deliberately took this player's session. Retrying
+        // automatically would make the two clients evict each other forever.
+        connectionReplaced = true;
+        setReconnectMode(true);
+        $('btn-reconnect-here').focus();
+        return;
+      }
       reconnectTimer = setTimeout(() => {
         reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
         connect();
@@ -1242,17 +1344,22 @@ function connect() {
 }
 
 function send(msg) {
+  if (awaitingGameState && !['leave', 'leaveSpectator', 'chat'].includes(msg.type)) return;
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
   }
 }
 
-// --- Visibility change reconnect ---
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && roomCode && (!ws || ws.readyState !== WebSocket.OPEN)) {
-    connect();
-  }
-});
+// Resuming an apparently open connection must refresh the view too.
+function resumeRoomConnection() {
+  if (document.hidden || !roomCode || connectionReplaced) return;
+  if (ws?.readyState === WebSocket.OPEN) connectionWatchdog?.sync(true);
+  else connect();
+}
+document.addEventListener('visibilitychange', resumeRoomConnection);
+window.addEventListener('online', resumeRoomConnection);
+window.addEventListener('pageshow', resumeRoomConnection);
+window.addEventListener('focus', resumeRoomConnection);
 
 // --- Sounds ---
 let audioCtx = null;
@@ -3016,6 +3123,9 @@ function buildHashWithId(room) {
 }
 
 function leaveGame() {
+  connectionReplaced = false;
+  setReconnectMode(false);
+  stopConnectionWatchdog();
   resetRoomChat();
   pendingPlay = null;
   awaitingGameState = true;
