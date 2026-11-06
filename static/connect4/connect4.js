@@ -81,7 +81,7 @@ let overDismissed = false;
 let joinSent = false;
 let joinBlocked = null;
 let hasSeenGame = false;
-let lastFocus = null;
+const modalStack = [];
 let renderedMoveCount = 0;
 const lobbySeen = new Set();
 const OPENING_REVEAL_MS = 2200;
@@ -353,6 +353,7 @@ function onState(next) {
     syncOpeningReveal(next);
     renderTopBar();
     renderPlayers(next.game);
+    renderCells(next.game);
     renderTurn(next.game, next.you.seat >= 0 && next.game.currentSeat === next.you.seat && !isOver(next.game));
     if (!overPending) syncOverModal();
     return;
@@ -411,6 +412,7 @@ function renderTopBar() {
   sound.textContent = sfx.on ? '🔊' : '🔇';
   sound.setAttribute('aria-pressed', String(sfx.on));
   sound.title = sfx.on ? 'Sound effects on' : 'Sound effects off';
+  $('btn-results').classList.toggle('hidden', !view?.game || !isOver(view.game));
 }
 
 // ---------- Lobby ----------
@@ -612,6 +614,10 @@ function renderCells(g) {
       const cell = el('div', 'c4-cell');
       cell.dataset.row = String(row);
       cell.dataset.col = String(col);
+      cell.setAttribute('role', 'img');
+      const occupant = v ? `${playerNameOf(v - 1)}'s ${seatColour(v - 1).name} disc` : 'empty';
+      const winning = g.winningLine?.some(([r, c]) => r === row && c === col);
+      cell.setAttribute('aria-label', `Row ${row + 1}, column ${col + 1}: ${occupant}${winning ? ', winning line' : ''}`);
       if (v === 1) cell.classList.add('red');
       else if (v === 2) cell.classList.add('yellow');
       if (g.winningLine?.some(([r, c]) => r === row && c === col)) cell.classList.add('win');
@@ -682,22 +688,68 @@ function renderLog(g) {
 function showModal(id) {
   const m = $(id);
   if (!m.classList.contains('hidden')) return;
-  if (!document.querySelector('.c4-modal:not(.hidden)')) lastFocus = document.activeElement;
+  modalStack.push({ modal: m, returnFocus: document.activeElement });
   m.classList.remove('hidden');
+  syncModalIsolation();
   document.body.classList.add('modal-open');
-  if (id !== 'modal-confirm') requestAnimationFrame(() => m.querySelector('button:not(.hidden):not([disabled])')?.focus({ preventScroll: true }));
+  focusModal(m);
 }
 
 function hideModal(id) {
   const m = $(id);
   if (m.classList.contains('hidden')) return;
+  const index = modalStack.findIndex((entry) => entry.modal === m);
+  const [entry] = index < 0 ? [] : modalStack.splice(index, 1);
   m.classList.add('hidden');
-  if (!document.querySelector('.c4-modal:not(.hidden)')) {
+  syncModalIsolation();
+  const active = modalStack.at(-1)?.modal;
+  if (active) {
+    if (active.contains(entry?.returnFocus)) entry.returnFocus.focus({ preventScroll: true });
+    else focusModal(active);
+  } else {
     document.body.classList.remove('modal-open');
-    if (lastFocus?.isConnected) lastFocus.focus({ preventScroll: true });
-    lastFocus = null;
+    const target = entry?.returnFocus;
+    if (target?.isConnected && target.matches('button, a[href], input, select, textarea, [tabindex]') &&
+        !target.disabled && target.getClientRects().length) target.focus({ preventScroll: true });
+    else for (const id of ['btn-results', 'btn-start', 'btn-take-seat', 'btn-rules-home']) {
+      const fallback = $(id);
+      if (fallback.getClientRects().length && !fallback.disabled) { fallback.focus({ preventScroll: true }); break; }
+    }
   }
 }
+
+function modalFocusables(modal) {
+  return [...modal.querySelectorAll('button, a[href], input, select, textarea, [tabindex]')]
+    .filter((node) => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length);
+}
+
+function focusModal(modal) {
+  modal.tabIndex = -1;
+  (modalFocusables(modal)[0] ?? modal).focus({ preventScroll: true });
+}
+
+function syncModalIsolation() {
+  const active = modalStack.at(-1)?.modal;
+  for (const node of document.body.children) node.inert = !!active && node !== active;
+  modalStack.forEach(({ modal }, index) => { modal.style.zIndex = String(1200 + index); });
+}
+
+document.addEventListener('focusin', (event) => {
+  const modal = modalStack.at(-1)?.modal;
+  if (modal && !modal.contains(event.target)) focusModal(modal);
+});
+
+document.addEventListener('keydown', (event) => {
+  const modal = modalStack.at(-1)?.modal;
+  if (!modal || event.key !== 'Tab') return;
+  const nodes = modalFocusables(modal);
+  const first = nodes[0], last = nodes.at(-1);
+  if (!nodes.length || (event.shiftKey && document.activeElement === first) ||
+      (!event.shiftKey && document.activeElement === last) || !nodes.includes(document.activeElement)) {
+    event.preventDefault();
+    (event.shiftKey ? last ?? modal : first ?? modal).focus();
+  }
+});
 
 function syncOverModal() {
   const g = view?.game;
@@ -706,6 +758,7 @@ function syncOverModal() {
 }
 
 function showOverModal(g) {
+  $('btn-again').classList.toggle('hidden', view.you.seat < 0);
   const youWon = g.winner === view.you.seat;
   const draw = g.isDraw;
   $('over-title').textContent = draw ? '🤝 Draw' : youWon ? '🏆 You win!' : `${playerNameOf(g.winner)} wins`;
@@ -846,7 +899,7 @@ function leaveRoom(notify = true) {
   if (socket) { socket.onclose = null; setTimeout(() => socket.close(), 50); }
   history.replaceState(null, '', location.pathname);
   $('overlay-reconnect').classList.add('hidden');
-  for (const m of document.querySelectorAll('.c4-modal')) m.classList.add('hidden');
+  for (const m of document.querySelectorAll('.c4-modal')) hideModal(m.id);
   document.body.classList.remove('modal-open');
   render();
 }
@@ -981,6 +1034,7 @@ $('btn-stats-home').addEventListener('click', hideStats);
 for (const b of document.querySelectorAll('#c4-min-games .min-games-btn')) {
   b.addEventListener('click', () => { statsMinGames = Number(b.dataset.value); renderStats(); });
 }
+$('btn-results').addEventListener('click', () => { overDismissed = false; syncOverModal(); });
 $('btn-again').addEventListener('click', () => send({ type: 'backToLobby' }));
 $('btn-over-close').addEventListener('click', () => { overDismissed = true; hideModal('modal-over'); });
 $('confirm-ok').addEventListener('click', () => confirmDone?.(true));
@@ -997,8 +1051,10 @@ $('modal-rules').addEventListener('click', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (confirmDone) confirmDone(false);
-    else if (!$('modal-rules').classList.contains('hidden')) hideModal('modal-rules');
+    const active = modalStack.at(-1)?.modal;
+    if (active?.id === 'modal-confirm') confirmDone?.(false);
+    else if (active?.id === 'modal-rules') hideModal('modal-rules');
+    else if (active?.id === 'modal-over') { overDismissed = true; hideModal('modal-over'); }
     return;
   }
   if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.('input, textarea, select, button')) return;

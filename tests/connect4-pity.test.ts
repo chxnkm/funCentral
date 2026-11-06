@@ -124,7 +124,15 @@ describe('Connect 4 repeated-opponent protection (real D1)', () => {
   it('concurrent distinct results crossing the threshold protect only the fourth loss', async () => {
     await losses(2);
     const full = await expected(win('third'), false);
-    const half = await expected(win('fourth'), true);
+    // The fourth loss must use the ratings AFTER the third, not the shared
+    // pre-transaction snapshot. Rounding can make its protected delta differ.
+    const before = await ratings();
+    const halfMap = computeConnect4Deltas(win('fourth').players.map((player, i) => ({
+      ...player,
+      rating: Number(before.find((r) => r.telegram_id === player.telegramId)!.rating) + full[i]!,
+      gamesPlayed: Number(before.find((r) => r.telegram_id === player.telegramId)!.games_played) + 1,
+    })), true);
+    const half = win('fourth').players.map((p) => halfMap.get(p.telegramId));
     let arrivals = 0;
     let release!: () => void;
     const ready = new Promise<void>(resolve => { release = resolve; });

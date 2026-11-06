@@ -35,91 +35,111 @@ export async function recordConnect4Game(db: D1Database, result: Connect4GameRes
   const byId = new Map<number, Connect4PlayerResult>();
   for (const p of result.players) if (!byId.has(p.telegramId)) byId.set(p.telegramId, p);
   const ids = [...byId.keys()];
-  const rows = ids.length ? await db
-    .prepare(`SELECT telegram_id, rating, games_played FROM connect4_ratings WHERE telegram_id IN (${ids.map(() => '?').join(',')})`)
-    .bind(...ids)
-    .all<{ telegram_id: number; rating: number; games_played: number }>() : { results: [] };
-  const existing = new Map((rows.results ?? []).map((r) => [r.telegram_id, r]));
-  const placed: PlacedPlayer[] = ids.map((id) => ({
-    telegramId: id,
-    place: byId.get(id)!.place,
-    rating: existing.get(id)?.rating ?? START_RATING,
-    gamesPlayed: existing.get(id)?.games_played ?? 0,
-  }));
-  const deltas = computeConnect4Deltas(placed);
-  const protectedDeltas = computeConnect4Deltas(placed, true);
-  const loser = placed.find((p) => p.place === 2);
-  const winner = placed.find((p) => p.place === 1);
-  // Evaluate inside the batch, not in a separate read: simultaneous completions
-  // must see the preceding committed result when deciding the fourth loss.
-  // Exclude this game so both history inserts and duplicate retries see the
-  // same prior streak. The loser's latest rated games define that streak.
-  const pityCondition = placed.length === 2 && loser && winner ? `(
-    SELECT COUNT(*) = ${PITY_LOSS_THRESHOLD} AND SUM(CASE
-      WHEN recent.place = 2 AND EXISTS (
-        SELECT 1 FROM connect4_rating_history opponent
-        WHERE opponent.game_id = recent.game_id AND opponent.telegram_id = ? AND opponent.place = 1
-      ) THEN 1 ELSE 0 END) = ${PITY_LOSS_THRESHOLD}
-    FROM (
-      SELECT game_id, place FROM connect4_rating_history
-      WHERE telegram_id = ? AND game_id <> ?
-      ORDER BY rowid DESC LIMIT ${PITY_LOSS_THRESHOLD}
-    ) recent
-  )` : '0';
-  const pityBindings = placed.length === 2 && loser && winner
-    ? [winner.telegramId, loser.telegramId, result.gameId] : [];
+  // D1's batch is atomic, but the Elo input read is not part of that batch.
+  // Retry a rejected snapshot; persistent contention is retried by the room outbox.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const rows = ids.length ? await db
+      .prepare(`SELECT telegram_id, rating, games_played FROM connect4_ratings WHERE telegram_id IN (${ids.map(() => '?').join(',')})`)
+      .bind(...ids)
+      .all<{ telegram_id: number; rating: number; games_played: number }>() : { results: [] };
+    const existing = new Map((rows.results ?? []).map((r) => [r.telegram_id, r]));
+    const placed: PlacedPlayer[] = ids.map((id) => ({
+      telegramId: id,
+      place: byId.get(id)!.place,
+      rating: existing.get(id)?.rating ?? START_RATING,
+      gamesPlayed: existing.get(id)?.games_played ?? 0,
+    }));
+    const deltas = computeConnect4Deltas(placed);
+    const protectedDeltas = computeConnect4Deltas(placed, true);
+    const loser = placed.find((p) => p.place === 2);
+    const winner = placed.find((p) => p.place === 1);
+    // Evaluate inside the batch, not in a separate read: simultaneous completions
+    // must see the preceding committed result when deciding the fourth loss.
+    // Exclude this game so both history inserts and duplicate retries see the
+    // same prior streak. The loser's latest rated games define that streak.
+    const pityCondition = placed.length === 2 && loser && winner ? `(
+      SELECT COUNT(*) = ${PITY_LOSS_THRESHOLD} AND SUM(CASE
+        WHEN recent.place = 2 AND EXISTS (
+          SELECT 1 FROM connect4_rating_history opponent
+          WHERE opponent.game_id = recent.game_id AND opponent.telegram_id = ? AND opponent.place = 1
+        ) THEN 1 ELSE 0 END) = ${PITY_LOSS_THRESHOLD}
+      FROM (
+        SELECT game_id, place FROM connect4_rating_history
+        WHERE telegram_id = ? AND game_id <> ?
+        ORDER BY rowid DESC LIMIT ${PITY_LOSS_THRESHOLD}
+      ) recent
+    )` : '0';
+    const pityBindings = placed.length === 2 && loser && winner
+      ? [winner.telegramId, loser.telegramId, result.gameId] : [];
 
-  // D1 batches are transactions. Gate every write on the completion marker and
-  // insert that marker LAST, so failures roll back and concurrent retries are no-ops.
-  const statements = placed.flatMap((p) => {
-    const delta = deltas.get(p.telegramId) ?? 0;
-    const won = byId.get(p.telegramId)!.won ? 1 : 0;
-    const draw = byId.get(p.telegramId)!.draw ? 1 : 0;
-    return [
-      db.prepare(
-        `WITH adjustment AS (SELECT CASE WHEN ${pityCondition} THEN ? ELSE ? END AS delta)
-         INSERT INTO connect4_rating_history (game_id, telegram_id, place, rating_before, rating_after, delta, played_at)
-         SELECT ?, ?, ?, COALESCE(r.rating, ?), COALESCE(r.rating, ?) + adjustment.delta, adjustment.delta, ?
-         FROM (SELECT 1) LEFT JOIN connect4_ratings r ON r.telegram_id = ?
-         CROSS JOIN adjustment
-         WHERE NOT EXISTS (SELECT 1 FROM connect4_games WHERE game_id = ?)
-         RETURNING telegram_id AS telegramId, rating_before AS before, rating_after AS after, delta`,
-      ).bind(...pityBindings, protectedDeltas.get(p.telegramId) ?? 0, delta,
-        result.gameId, p.telegramId, p.place, START_RATING, START_RATING, now, p.telegramId, result.gameId),
-      db.prepare(
-        `INSERT INTO connect4_ratings (telegram_id, rating, games_played, wins, draws, updated_at)
-         SELECT ?, ? + (SELECT delta FROM connect4_rating_history WHERE game_id = ? AND telegram_id = ?), 1, ?, ?, ?
-         WHERE NOT EXISTS (SELECT 1 FROM connect4_games WHERE game_id = ?)
-         ON CONFLICT(telegram_id) DO UPDATE SET
-           rating = connect4_ratings.rating + excluded.rating - ?,
-           games_played = games_played + 1,
-           wins = wins + excluded.wins,
-           draws = draws + excluded.draws,
-           updated_at = excluded.updated_at`,
-      ).bind(p.telegramId, START_RATING, result.gameId, p.telegramId, won, draw, now, result.gameId, START_RATING),
-    ];
-  });
-  if (result.groupId) {
-    for (const id of new Set(result.memberIds ?? [])) {
-      const res = byId.get(id);
-      const won = res?.won ? 1 : 0;
-      const draw = res?.draw ? 1 : 0;
-      statements.push(db.prepare(
-        `INSERT INTO connect4_group_stats (group_id, telegram_id, games_played, wins, draws)
-         SELECT ?, ?, 1, ?, ?
-         WHERE NOT EXISTS (SELECT 1 FROM connect4_games WHERE game_id = ?)
-         ON CONFLICT(group_id, telegram_id) DO UPDATE SET
-           games_played = games_played + 1,
-           wins = wins + excluded.wins,
-           draws = draws + excluded.draws`,
-      ).bind(result.groupId, id, won, draw, result.gameId));
+    // Accept the first history row only if BOTH players' Elo inputs still match.
+    // Every later write is gated on that row, so a stale snapshot makes the entire
+    // batch a no-op, including group counters and the completion marker. Pity
+    // eligibility remains evaluated inside the accepted transaction.
+    const snapshot = placed.map(() => `EXISTS (
+      SELECT 1 FROM (SELECT 1) LEFT JOIN connect4_ratings r ON r.telegram_id = ?
+      WHERE COALESCE(r.rating, ?) = ? AND COALESCE(r.games_played, 0) = ?
+    )`).join(' AND ') || '1';
+    const snapshotArgs = placed.flatMap((p) => [p.telegramId, START_RATING, p.rating, p.gamesPlayed]);
+    const accepted = 'EXISTS (SELECT 1 FROM connect4_rating_history WHERE game_id = ? AND telegram_id = ?)';
+    const acceptanceArgs = [result.gameId, ids[0] ?? 0];
+    const statements = placed.flatMap((p, i) => {
+      const delta = deltas.get(p.telegramId) ?? 0;
+      const won = byId.get(p.telegramId)!.won ? 1 : 0;
+      const draw = byId.get(p.telegramId)!.draw ? 1 : 0;
+      return [
+        db.prepare(
+          `WITH adjustment AS (SELECT CASE WHEN ${pityCondition} THEN ? ELSE ? END AS delta)
+           INSERT INTO connect4_rating_history (game_id, telegram_id, place, rating_before, rating_after, delta, played_at)
+           SELECT ?, ?, ?, COALESCE(r.rating, ?), COALESCE(r.rating, ?) + adjustment.delta, adjustment.delta, ?
+           FROM (SELECT 1) LEFT JOIN connect4_ratings r ON r.telegram_id = ?
+           CROSS JOIN adjustment
+           WHERE NOT EXISTS (SELECT 1 FROM connect4_games WHERE game_id = ?)
+             AND (${i === 0 ? snapshot : accepted})
+           RETURNING telegram_id AS telegramId, rating_before AS before, rating_after AS after, delta`,
+        ).bind(...pityBindings, protectedDeltas.get(p.telegramId) ?? 0, delta,
+          result.gameId, p.telegramId, p.place, START_RATING, START_RATING, now, p.telegramId, result.gameId,
+          ...(i === 0 ? snapshotArgs : acceptanceArgs)),
+        db.prepare(
+          `INSERT INTO connect4_ratings (telegram_id, rating, games_played, wins, draws, updated_at)
+           SELECT ?, ? + (SELECT delta FROM connect4_rating_history WHERE game_id = ? AND telegram_id = ?), 1, ?, ?, ?
+           WHERE NOT EXISTS (SELECT 1 FROM connect4_games WHERE game_id = ?)
+             AND ${accepted}
+           ON CONFLICT(telegram_id) DO UPDATE SET
+             rating = connect4_ratings.rating + excluded.rating - ?,
+             games_played = games_played + 1,
+             wins = wins + excluded.wins,
+             draws = draws + excluded.draws,
+             updated_at = excluded.updated_at`,
+        ).bind(p.telegramId, START_RATING, result.gameId, p.telegramId, won, draw, now, result.gameId, ...acceptanceArgs, START_RATING),
+      ];
+    });
+    if (result.groupId) {
+      for (const id of new Set(result.memberIds ?? [])) {
+        const res = byId.get(id);
+        const won = res?.won ? 1 : 0;
+        const draw = res?.draw ? 1 : 0;
+        statements.push(db.prepare(
+          `INSERT INTO connect4_group_stats (group_id, telegram_id, games_played, wins, draws)
+           SELECT ?, ?, 1, ?, ?
+           WHERE NOT EXISTS (SELECT 1 FROM connect4_games WHERE game_id = ?)
+             AND ${accepted}
+           ON CONFLICT(group_id, telegram_id) DO UPDATE SET
+             games_played = games_played + 1,
+             wins = wins + excluded.wins,
+             draws = draws + excluded.draws`,
+        ).bind(result.groupId, id, won, draw, result.gameId, ...acceptanceArgs));
+      }
     }
+    statements.push(db.prepare(
+      `INSERT OR IGNORE INTO connect4_games (game_id, room_code, num_players, played_at)
+       SELECT ?, ?, ?, ? WHERE ${placed.length ? accepted : '1'}`,
+    ).bind(result.gameId, result.roomCode, result.numPlayers, now, ...(placed.length ? acceptanceArgs : [])));
+    const committed = await db.batch<RatingChange>(statements);
+    const changes = placed.flatMap((_, i) => committed[i * 2].results ?? []);
+    if (changes.length || await db.prepare('SELECT 1 FROM connect4_games WHERE game_id = ?').bind(result.gameId).first()) return changes;
   }
-  statements.push(db.prepare(
-    `INSERT OR IGNORE INTO connect4_games (game_id, room_code, num_players, played_at) VALUES (?, ?, ?, ?)`,
-  ).bind(result.gameId, result.roomCode, result.numPlayers, now));
-  const committed = await db.batch<RatingChange>(statements);
-  return placed.flatMap((_, i) => committed[i * 2].results ?? []);
+  throw new Error('Connect 4 rating contention; retry completion');
 }
 
 export interface Connect4LeaderboardEntry {

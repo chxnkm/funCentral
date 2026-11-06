@@ -21,6 +21,7 @@
     <span id="tb-name" class="top-bar-name"></span>
     <button id="btn-sound" type="button" class="c4-icon-btn" aria-pressed="false" aria-label="Sound effects" title="Sound effects"></button>
     <button id="btn-rules" type="button" class="c4-icon-btn" aria-label="How to play" title="How to play">?</button>
+    <button id="btn-results" type="button" class="c4-icon-btn hidden" aria-label="View results" title="View results and play again">🏆</button>
     <button id="btn-leave" type="button" class="btn-leave-global">Leave</button>
   </div>
 
@@ -155,7 +156,7 @@
         <div id="c4-players" class="c4-players" aria-label="Players"></div>
         <div class="c4-frame">
           <div id="c4-drops" class="c4-drops" aria-label="Choose a column"></div>
-          <div id="c4-cells" class="c4-cells" aria-label="Connect 4 board"></div>
+          <div id="c4-cells" class="c4-cells" role="group" aria-label="Connect 4 board; rows numbered from top to bottom"></div>
         </div>
         <h3 id="c4-turn" class="c4-turn" role="status" aria-live="polite" aria-atomic="true"></h3>
         <p id="c4-caption" class="c4-caption"></p>

@@ -1,13 +1,17 @@
 // Local-only workerd/SQLite harness for Connect 4 room/bot integration tests.
 import { Miniflare, Response, convertV4MiniflareOptions } from 'miniflare';
 import { build } from 'esbuild';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 export { Response };
 
-export async function createConnect4RoomHarness() {
+export async function createConnect4RoomHarness(test: {
+  outbound?: (request: Request) => Promise<Response>;
+  gateRatingRead?: boolean;
+  gateRatingAck?: boolean;
+} = {}) {
   const root = path.resolve(import.meta.dirname, '..');
   const state = await mkdtemp(path.join(tmpdir(), 'connect4-room-'));
   const { outputFiles } = await build({
@@ -18,9 +22,35 @@ export async function createConnect4RoomHarness() {
       contents: `
         import { Connect4Room } from './src/connect4/room';
         export class TestRoom extends Connect4Room {
+          constructor(ctx, env) {
+            const db = {
+              prepare(sql) {
+                const statement = env.DB.prepare(sql);
+                if (!env.TEST_RATING_READ || !sql.startsWith('SELECT telegram_id, rating, games_played')) return statement;
+                return { bind(...values) {
+                  const bound = statement.bind(...values);
+                  return { async all() {
+                    const rows = await bound.all();
+                    await fetch('https://connect4.test/rating-read');
+                    return rows;
+                  } };
+                } };
+              },
+              async batch(statements) {
+                const result = await env.DB.batch(statements);
+                if (env.TEST_RATING_ACK) {
+                  const ack = await fetch('https://connect4.test/rating-ack');
+                  if (!ack.ok) throw new Error('injected lost rating acknowledgement');
+                }
+                return result;
+              },
+            };
+            super(ctx, { ...env, DB: db });
+          }
           async fetch(request) {
             const url = new URL(request.url);
             if (url.pathname === '/__state') {
+              if (request.method === 'POST') await this.ctx.storage.put('state', await request.json());
               return Response.json({ state: await this.ctx.storage.get('state'), alarm: await this.ctx.storage.getAlarm() });
             }
             if (url.pathname === '/__alarm') {
@@ -44,11 +74,19 @@ export async function createConnect4RoomHarness() {
     durableObjects: { ROOM: { className: 'TestRoom', useSQLite: true } },
     resourcePersistencePath: state,
     d1Databases: ['DB'],
-    bindings: { TELEGRAM_BOT_TOKEN: 'local-test-token', ALLOW_DEV_LOGIN: '1' },
-    outboundService: async () => Response.json({ ok: true, result: { status: 'member' } }),
+    bindings: {
+      TELEGRAM_BOT_TOKEN: 'local-test-token', ALLOW_DEV_LOGIN: '1',
+      TEST_RATING_READ: test.gateRatingRead ?? false, TEST_RATING_ACK: test.gateRatingAck ?? false,
+    },
+    outboundService: test.outbound ?? (async () => Response.json({ ok: true, result: { status: 'member' } })),
   };
   let mf = new Miniflare(convertV4MiniflareOptions(options));
   await mf.ready;
+  let db = await mf.getD1Database('DB');
+  await db.prepare('CREATE TABLE groups (group_id TEXT PRIMARY KEY)').run();
+  await db.prepare("INSERT INTO groups (group_id) VALUES ('-100')").run();
+  const migration = await readFile(path.join(root, 'migrations/0015_connect4.sql'), 'utf8');
+  for (const sql of migration.replace(/--[^\n]*/g, '').split(';').map((sql) => sql.trim()).filter(Boolean)) await db.prepare(sql).run();
 
   const room = async (name: string) => {
     const ns = await mf.getDurableObjectNamespace('ROOM');
@@ -57,10 +95,12 @@ export async function createConnect4RoomHarness() {
 
   return {
     room,
+    get db() { return db; },
     async restart() {
       await mf.dispose();
       mf = new Miniflare(convertV4MiniflareOptions(options));
       await mf.ready;
+      db = await mf.getD1Database('DB');
     },
     async stop() {
       await mf.dispose();

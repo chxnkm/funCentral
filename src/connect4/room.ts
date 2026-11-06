@@ -179,6 +179,7 @@ export class Connect4Room extends DurableObject {
     if (!session || typeof message !== 'string') return;
     let msg: Connect4ClientMessage;
     try { msg = JSON.parse(message); } catch { return; }
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.type !== 'string') return;
     const state = await this.getState();
     if (!state) return;
 
@@ -476,8 +477,22 @@ export class Connect4Room extends DurableObject {
   }
 
   private removePlayer(state: RoomState, seat: number): void {
-    const [removed] = state.players.splice(seat, 1);
-    if (state.hostId === removed.id) state.hostId = state.players[0]?.id ?? null;
+    state.players.splice(seat, 1);
+    this.ensureHumanHost(state);
+  }
+
+  /** Repair old bot-hosted rooms too; pending rating work must survive cleanup. */
+  private ensureHumanHost(state: RoomState): void {
+    const humans = state.players.filter((p) => !p.isBot);
+    if (!humans.length) {
+      state.players = [];
+      state.hostId = null;
+      state.game = null;
+      state.botMoveAt = null;
+      state.openingUntil = null;
+    } else if (!humans.some((p) => p.id === state.hostId)) {
+      state.hostId = humans[0].id;
+    }
   }
 
   private async getState(): Promise<RoomState | null> {
@@ -485,6 +500,7 @@ export class Connect4Room extends DurableObject {
     if (state) {
       state.kickedIds ??= [];
       state.botMoveAt ??= null;
+      this.ensureHumanHost(state);
     }
     return state;
   }
