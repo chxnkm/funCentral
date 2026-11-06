@@ -1,0 +1,137 @@
+
+ RUN  v4.1.12 E:/funCentral-connect4-screenshots
+
+ ❯ tests/connect4-concurrency.test.ts (6 tests | 6 failed) 5926ms
+     × new players: overlapping old snapshots equal a valid sequential execution 383ms
+     × K-factor boundary: overlapping old snapshots equal a valid sequential execution 193ms
+     × shared player second: overlapping old snapshots equal a valid sequential execution 195ms
+     × draw changes game count: overlapping old snapshots equal a valid sequential execution 195ms
+     × contention exhaustion commits nothing and remains retryable 119ms
+     × duplicate/reordered completions, late rollback and lost acknowledgements converge to sequential history 1104ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/connect4-concurrency.test.ts > Connect 4 cross-room concurrency and retry chaos (real D1) > new players: overlapping old snapshots equal a valid sequential execution
+ FAIL  tests/connect4-concurrency.test.ts > Connect 4 cross-room concurrency and retry chaos (real D1) > K-factor boundary: overlapping old snapshots equal a valid sequential execution
+ FAIL  tests/connect4-concurrency.test.ts > Connect 4 cross-room concurrency and retry chaos (real D1) > shared player second: overlapping old snapshots equal a valid sequential execution
+ FAIL  tests/connect4-concurrency.test.ts > Connect 4 cross-room concurrency and retry chaos (real D1) > draw changes game count: overlapping old snapshots equal a valid sequential execution
+AssertionError: expected 2 to be 3 // Object.is equality
+
+- Expected
++ Received
+
+- 3
++ 2
+
+ ❯ tests/connect4-concurrency.test.ts:59:29
+     57|     const racing = barrier(actual.db as unknown as D1Database);
+     58|     expect((await Promise.all([complete(racing, a), complete(racing, b…
+     59|     expect(racing.arrivals).toBe(3); // a stale transaction must re-re…
+       |                             ^
+     60|     const order = (await actual.db.prepare('SELECT game_id FROM connec…
+     61|     for (const row of order) await complete(oracle.db as unknown as D1…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  tests/connect4-concurrency.test.ts > Connect 4 cross-room concurrency and retry chaos (real D1) > contention exhaustion commits nothing and remains retryable
+AssertionError: promise resolved "[ { telegramId: 1, …(3) }, …(1) ]" instead of rejecting
+
+- Expected:
+Error {
+  "message": "rejected promise",
+}
+
++ Received:
+[
+  {
+    "after": 1008,
+    "before": 1000,
+    "delta": 8,
+    "telegramId": 1,
+  },
+  {
+    "after": 992,
+    "before": 1000,
+    "delta": -8,
+    "telegramId": 2,
+  },
+]
+
+ ❯ tests/connect4-concurrency.test.ts:79:60
+     77|       },
+     78|     } as unknown as D1Database;
+     79|     await expect(complete(alwaysStale, win('retry-later'))).rejects.to…
+       |                                                            ^
+     80|     expect(attempts).toBe(5);
+     81|     for (const table of ['connect4_games', 'connect4_rating_history', …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  tests/connect4-concurrency.test.ts > Connect 4 cross-room concurrency and retry chaos (real D1) > duplicate/reordered completions, late rollback and lost acknowledgements converge to sequential history
+AssertionError: expected { connect4_games: [ …(12) ], …(3) } to deeply equal { connect4_games: [ …(12) ], …(3) }
+
+- Expected
++ Received
+
+@@ -159,12 +159,12 @@
+      {
+        "delta": -8,
+        "game_id": "chaos-10",
+        "place": 2,
+        "played_at": 100,
+-       "rating_after": 993,
+-       "rating_before": 1001,
++       "rating_after": 992,
++       "rating_before": 1000,
+        "telegram_id": 4,
+      },
+      {
+        "delta": 4,
+        "game_id": "chaos-11",
+@@ -263,15 +263,15 @@
+        "rating_after": 1016,
+        "rating_before": 1020,
+        "telegram_id": 1,
+      },
+      {
+-       "delta": 9,
++       "delta": 8,
+        "game_id": "chaos-6",
+        "place": 1,
+        "played_at": 100,
+-       "rating_after": 1001,
++       "rating_after": 1000,
+        "rating_before": 992,
+        "telegram_id": 4,
+      },
+      {
+        "delta": 4,
+@@ -354,11 +354,11 @@
+        "wins": 1,
+      },
+      {
+        "draws": 0,
+        "games_played": 30,
+-       "rating": 993,
++       "rating": 992,
+        "telegram_id": 4,
+        "updated_at": 100,
+        "wins": 1,
+      },
+      {
+
+ ❯ tests/connect4-concurrency.test.ts:113:64
+    111|     expect(order).toHaveLength(12);
+    112|     for (const row of order) await complete(oracle.db as unknown as D1…
+    113|     expect(await snapshot(actual.db as unknown as D1Database)).toEqual…
+       |                                                                ^
+    114|     for (const result of inputs.reverse()) expect(await complete(actua…
+    115|     expect(await snapshot(actual.db as unknown as D1Database)).toEqual…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed (6)
+   Start at  14:39:49
+   Duration  8.02s (transform 295ms, setup 0ms, import 1.57s, tests 5.93s, environment 0ms)

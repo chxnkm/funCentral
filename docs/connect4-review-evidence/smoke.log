@@ -1,0 +1,47 @@
+
+> sg-bridge@1.0.0 test:connect4:smoke
+> playwright test tests/ui/connect4-review.pw.js tests/ui/connect4-modal-stack.pw.js tests/ui/connect4-layout.pw.js tests/ui/connect4-splash.pw.js
+
+
+Running 38 tests using 1 worker
+
+  ok  1 tests\ui\connect4-layout.pw.js:62:3 › board, open log and player plates fit at 320×740 (8.2s)
+  ok  2 tests\ui\connect4-layout.pw.js:62:3 › board, open log and player plates fit at 360×640 (8.5s)
+  ok  3 tests\ui\connect4-layout.pw.js:62:3 › board, open log and player plates fit at 390×844 (7.6s)
+  ok  4 tests\ui\connect4-layout.pw.js:62:3 › board, open log and player plates fit at 520×740 (7.7s)
+  ok  5 tests\ui\connect4-layout.pw.js:62:3 › board, open log and player plates fit at 768×1024 (7.8s)
+  ok  6 tests\ui\connect4-layout.pw.js:62:3 › board, open log and player plates fit at 844×390 (7.6s)
+  ok  7 tests\ui\connect4-layout.pw.js:62:3 › board, open log and player plates fit at 979×900 (8.4s)
+  ok  8 tests\ui\connect4-layout.pw.js:62:3 › board, open log and player plates fit at 980×900 (7.7s)
+  ok  9 tests\ui\connect4-layout.pw.js:62:3 › board, open log and player plates fit at 1024×768 (7.8s)
+  ok 10 tests\ui\connect4-layout.pw.js:62:3 › board, open log and player plates fit at 1366×900 (8.1s)
+  ok 11 tests\ui\connect4-layout.pw.js:109:1 › narrow home and lobby controls align; rules and results stay inside the viewport (14.9s)
+  ok 12 tests\ui\connect4-layout.pw.js:153:3 › bot and host badges match without highlighting at 320px (2.4s)
+  ok 13 tests\ui\connect4-layout.pw.js:153:3 › bot and host badges match without highlighting at 1366px (2.5s)
+  ok 14 tests\ui\connect4-layout.pw.js:174:3 › separate three-colour palettes stay synced from lobby to results at 320px (15.8s)
+  ok 15 tests\ui\connect4-layout.pw.js:174:3 › separate three-colour palettes stay synced from lobby to results at 1366px (17.4s)
+  ok 16 tests\ui\connect4-layout.pw.js:243:3 › opening border reveals the real starter at 390px with motion no-preference (8.4s)
+  ok 17 tests\ui\connect4-layout.pw.js:243:3 › opening border reveals the real starter at 1366px with motion no-preference (7.4s)
+  ok 18 tests\ui\connect4-layout.pw.js:243:3 › opening border reveals the real starter at 390px with motion reduce (7.6s)
+  ok 19 tests\ui\connect4-layout.pw.js:302:3 › opening shuffle audio respects muted (6.2s)
+  ok 20 tests\ui\connect4-layout.pw.js:302:3 › opening shuffle audio respects enabled (6.6s)
+  ok 21 tests\ui\connect4-layout.pw.js:302:3 › opening shuffle audio respects mute during shuffle (7.0s)
+  ok 22 tests\ui\connect4-layout.pw.js:351:1 › no early-end control exists, forged resets fail, and leaving preserves the active round (4.8s)
+  ok 23 tests\ui\connect4-layout.pw.js:379:1 › four complete rated rematches apply protection to both players on the fourth loss (29.1s)
+  ok 24 tests\ui\connect4-modal-stack.pw.js:9:1 › a winning result above an open rules modal traps focus and restores each layer (11.2s)
+  ok 25 tests\ui\connect4-review.pw.js:86:3 › same player and both humans can dismiss results, reconnect and rematch (desktop) (18.7s)
+  ok 26 tests\ui\connect4-review.pw.js:86:3 › same player and both humans can dismiss results, reconnect and rematch (mobile) (19.3s)
+  ok 27 tests\ui\connect4-review.pw.js:122:3 › accessible board exposes empty cells and chosen Red/Yellow contents, without 42 tab stops (7.9s)
+  ok 28 tests\ui\connect4-review.pw.js:122:3 › accessible board exposes empty cells and chosen Rose/Cyan contents, without 42 tab stops (7.3s)
+  ok 29 tests\ui\connect4-review.pw.js:122:3 › accessible board exposes empty cells and chosen Violet/Mint contents, without 42 tab stops (8.4s)
+  ok 30 tests\ui\connect4-review.pw.js:152:61 › practice bot: complete a real game, then rematch with no other human (17.6s)
+  ok 31 tests\ui\connect4-review.pw.js:152:61 › practice bot: complete a real game, then leave after completion with no other human (22.7s)
+  ok 32 tests\ui\connect4-splash.pw.js:45:3 › updated hub and Connect 4 splash fit with gravity-valid art at 320px (984ms)
+  ok 33 tests\ui\connect4-splash.pw.js:45:3 › updated hub and Connect 4 splash fit with gravity-valid art at 390px (1.8s)
+  ok 34 tests\ui\connect4-splash.pw.js:45:3 › updated hub and Connect 4 splash fit with gravity-valid art at 490px (1.3s)
+  ok 35 tests\ui\connect4-splash.pw.js:45:3 › updated hub and Connect 4 splash fit with gravity-valid art at 768px (1.0s)
+  ok 36 tests\ui\connect4-splash.pw.js:45:3 › updated hub and Connect 4 splash fit with gravity-valid art at 1366px (1.2s)
+  ok 37 tests\ui\connect4-splash.pw.js:69:3 › signed-in splash keeps create/join and four leaderboard tabs usable at 320px (2.8s)
+  ok 38 tests\ui\connect4-splash.pw.js:69:3 › signed-in splash keeps create/join and four leaderboard tabs usable at 1366px (2.9s)
+
+  38 passed (6.2m)

@@ -1,0 +1,12 @@
+
+> sg-bridge@1.0.0 test:connect4:chaos
+> vitest run tests/connect4-concurrency.test.ts tests/connect4-review-room.test.ts --maxWorkers=1
+
+
+ RUN  v4.1.12 E:/funCentral-connect4-fixes
+
+
+ Test Files  2 passed (2)
+      Tests  15 passed (15)
+   Start at  14:36:59
+   Duration  17.73s (transform 79ms, setup 0ms, import 678ms, tests 16.75s, environment 0ms)
